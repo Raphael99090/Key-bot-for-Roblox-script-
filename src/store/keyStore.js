@@ -11,7 +11,8 @@ const { paths } = require("../config");
  *   createdAt: 1710000000000,
  *   expiresAt: 1710000000000 | null,
  *   revoked: false,
- *   note: "" 
+ *   note: "",
+ *   lastHwidReset: 1710000000000 | null   // pra calcular o cooldown
  * }
  */
 
@@ -58,7 +59,8 @@ const KeyStore = {
             createdAt: now,
             expiresAt: daysValid ? now + daysValid * 86400000 : null,
             revoked: false,
-            note
+            note,
+            lastHwidReset: null
         };
         writeAll(all);
         return all[key];
@@ -96,11 +98,22 @@ const KeyStore = {
         return { ok: true, entry };
     },
 
+    /** Quanto tempo falta (em ms) até poder resetar de novo. 0 = pode resetar já. */
+    cooldownRemaining(key, cooldownHours) {
+        const all = readAll();
+        const entry = all[key];
+        if (!entry || !entry.lastHwidReset || !cooldownHours) return 0;
+        const elapsed = Date.now() - entry.lastHwidReset;
+        const total = cooldownHours * 3600000;
+        return Math.max(0, total - elapsed);
+    },
+
     /** Reseta o HWID de uma key (comando /key resethwid). */
     resetHwid(key) {
         const all = readAll();
         if (!all[key]) return false;
         all[key].hwid = null;
+        all[key].lastHwidReset = Date.now();
         writeAll(all);
         return true;
     },
