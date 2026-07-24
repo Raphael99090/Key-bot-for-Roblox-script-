@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
 const KeyStore = require("../../store/keyStore");
 const SettingsStore = require("../../store/settingsStore");
+const ResetCodeStore = require("../../store/resetCodeStore");
 const { isAdmin } = require("../../utils/permissions");
 const logger = require("../../utils/logger");
 
@@ -73,6 +74,11 @@ module.exports = {
                 .setDescription("Reseta o HWID de uma key (permite trocar de dispositivo)")
                 .addStringOption(opt =>
                     opt.setName("key").setDescription("A key a resetar").setRequired(true)
+                )
+                .addStringOption(opt =>
+                    opt.setName("codigo")
+                        .setDescription("Código de reset comprado (pula o cooldown)")
+                        .setRequired(false)
                 )
         ),
 
@@ -195,6 +201,7 @@ module.exports = {
         // --- resethwid ---
         if (sub === "resethwid") {
             const key = interaction.options.getString("key").trim();
+            const codigo = interaction.options.getString("codigo");
             const entry = KeyStore.get(key);
 
             if (!entry) {
@@ -203,17 +210,51 @@ module.exports = {
 
             const requireAdmin = SettingsStore.get("hwidResetAdminOnly");
             const ownsKey = entry.discordId === interaction.user.id;
+            const admin = isAdmin(interaction);
 
-            if (requireAdmin && !isAdmin(interaction)) {
-                return interaction.reply({ content: "❌ Reset de HWID está restrito a admins.", ephemeral: true });
+            if (requireAdmin && !admin && !codigo) {
+                return interaction.reply({ content: "❌ Reset de HWID está restrito a admins (ou use um código de reset).", ephemeral: true });
             }
-            if (!requireAdmin && !ownsKey && !isAdmin(interaction)) {
+            if (!requireAdmin && !ownsKey && !admin && !codigo) {
                 return interaction.reply({ content: "❌ Essa key não é sua.", ephemeral: true });
             }
 
+            // Se veio um código, ele precisa ser válido — e aí pula o cooldown de vez.
+            let usedCode = null;
+            if (codigo) {
+                const result = ResetCodeStore.use(codigo.trim(), key, interaction.user.id);
+                if (!result.ok) {
+                    const reasons = {
+                        not_found: "❌ Código de reset não encontrado.",
+                        already_used: "❌ Esse código de reset já foi usado."
+                    };
+                    return interaction.reply({ content: reasons[result.reason] || "❌ Código inválido.", ephemeral: true });
+                }
+                usedCode = result.entry;
+            } else if (!admin) {
+                // Sem código e sem ser admin: respeita o cooldown configurado.
+                const cooldownHours = SettingsStore.get("resetCooldownHours");
+                const remaining = KeyStore.cooldownRemaining(key, cooldownHours);
+                if (remaining > 0) {
+                    const horas = Math.ceil(remaining / 3600000);
+                    return interaction.reply({
+                        content: `⏳ Essa key só pode resetar o HWID de novo em ~${horas}h. Se precisar agora, use um código de reset com \`/key resethwid codigo:\`.`,
+                        ephemeral: true
+                    });
+                }
+            }
+
             KeyStore.resetHwid(key);
-            await interaction.reply({ content: `🔄 HWID da key \`${key}\` resetado.`, ephemeral: true });
-            await notifyLogChannel(interaction, `🔄 HWID da key \`${key}\` resetado por <@${interaction.user.id}>.`);
+            await interaction.reply({
+                content: usedCode
+                    ? `🔄 HWID da key \`${key}\` resetado (código \`${usedCode.code}\` consumido).`
+                    : `🔄 HWID da key \`${key}\` resetado.`,
+                ephemeral: true
+            });
+            await notifyLogChannel(
+                interaction,
+                `🔄 HWID da key \`${key}\` resetado por <@${interaction.user.id}>${usedCode ? ` usando código \`${usedCode.code}\`` : ""}.`
+            );
             return;
         }
     }
