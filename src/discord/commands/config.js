@@ -29,6 +29,15 @@ module.exports = {
                 )
         )
         .addSubcommand(sub =>
+            sub.setName("resetcooldown")
+                .setDescription("Define o cooldown (em horas) entre resets gratuitos de HWID")
+                .addIntegerOption(opt =>
+                    opt.setName("horas")
+                        .setDescription("0 = sem cooldown")
+                        .setRequired(true)
+                )
+        )
+        .addSubcommand(sub =>
             sub.setName("logchannel")
                 .setDescription("Define o canal onde o bot avisa sobre keys geradas/resgatadas/revogadas")
                 .addChannelOption(opt =>
@@ -56,11 +65,18 @@ module.exports = {
                         .addFields(
                             { name: "Validade padrão", value: s.defaultExpiryDays ? `${s.defaultExpiryDays} dias` : "nunca expira" },
                             { name: "Reset de HWID restrito a admin", value: s.hwidResetAdminOnly ? "sim" : "não" },
+                            { name: "Cooldown de reset de HWID", value: s.resetCooldownHours ? `${s.resetCooldownHours}h` : "sem cooldown" },
                             { name: "Canal de log", value: s.logChannelId ? `<#${s.logChannelId}>` : "desativado" }
                         )
                 ],
                 ephemeral: true
             });
+        }
+
+        if (sub === "resetcooldown") {
+            const horas = interaction.options.getInteger("horas");
+            SettingsStore.set("resetCooldownHours", horas > 0 ? horas : 0);
+            return interaction.reply({ content: `✅ Cooldown de reset de HWID: ${horas > 0 ? `${horas}h` : "desativado"}.`, ephemeral: true });
         }
 
         if (sub === "expiry") {
