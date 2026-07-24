@@ -68,7 +68,7 @@ Vercel Functions, etc). Opções de graça:
 - **Railway** ou **Render** (free tier — dão uma URL pública de graça, ótimo
   porque a API de validação já sai hospedada junto).
 - **Fly.io** (free allowance generoso).
-- **No seu próprio Termux**, já que é onde você desenvolve: `npm start` e
+- **No Termux**, : `npm start` e
   deixa rodando. Nesse caso, a API só fica acessível de fora com um túnel
   grátis (ex: `cloudflared tunnel` ou `ngrok`), porque o celular não tem
   IP público por padrão.
