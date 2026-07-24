@@ -7,6 +7,9 @@ const DEFAULTS = {
     defaultExpiryDays: null, // null = nunca expira
     // Se true, o comando /key resethwid só pode ser usado por admin.
     hwidResetAdminOnly: false,
+    // Horas de espera entre resets de HWID gratuitos (0 = sem cooldown).
+    // Um código de reset comprado (/resetcode) pula esse cooldown.
+    resetCooldownHours: 24,
     // Canal onde o bot avisa quando uma key é gerada/resgatada/revogada (opcional).
     logChannelId: null
 };
