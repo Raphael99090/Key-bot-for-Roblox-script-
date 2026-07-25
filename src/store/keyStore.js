@@ -98,6 +98,43 @@ const KeyStore = {
         return { ok: true, entry };
     },
 
+    /**
+     * Estende a validade de uma key (renovação). Se ela já tiver expirado
+     * ou nunca tiver expirado, conta os dias a partir de agora; senão,
+     * soma em cima da data de expiração atual.
+     */
+    extend(key, days) {
+        const all = readAll();
+        const entry = all[key];
+        if (!entry) return { ok: false, reason: "not_found" };
+
+        const base = entry.expiresAt && entry.expiresAt > Date.now() ? entry.expiresAt : Date.now();
+        entry.expiresAt = base + days * 86400000;
+        writeAll(all);
+        return { ok: true, entry };
+    },
+
+    /**
+     * Remove do arquivo as keys revogadas ou expiradas há mais de
+     * `olderThanDays` dias. Retorna a lista das keys removidas.
+     */
+    purge(olderThanDays = 30) {
+        const all = readAll();
+        const cutoff = Date.now() - olderThanDays * 86400000;
+        const removedKeys = [];
+
+        for (const [k, entry] of Object.entries(all)) {
+            const isExpired = entry.expiresAt && entry.expiresAt < cutoff;
+            const isOldRevoked = entry.revoked && entry.createdAt < cutoff;
+            if (isExpired || isOldRevoked) {
+                delete all[k];
+                removedKeys.push(k);
+            }
+        }
+        writeAll(all);
+        return removedKeys;
+    },
+
     /** Quanto tempo falta (em ms) até poder resetar de novo. 0 = pode resetar já. */
     cooldownRemaining(key, cooldownHours) {
         const all = readAll();

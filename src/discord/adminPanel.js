@@ -34,6 +34,30 @@ async function notifyLogChannel(interaction, text) {
     }
 }
 
+/** Loga em arquivo (sempre) e manda pro canal configurado (se houver), numa chamada só. */
+async function logAction(interaction, plainText) {
+    logger.action(interaction.user.id, plainText);
+    await notifyLogChannel(interaction, `${plainText.charAt(0).toUpperCase()}${plainText.slice(1)} — por <@${interaction.user.id}>.`);
+}
+
+/**
+ * Responde a uma interação de painel edatando a MESMA mensagem em vez de
+ * mandar uma nova. Funciona tanto pra botão (sempre editável) quanto pra
+ * modal (editável quando o modal foi aberto a partir de um componente da
+ * mensagem, que é sempre o nosso caso). Se por algum motivo não for
+ * possível editar, cai pra um reply ephemeral como último recurso.
+ */
+async function respondToPanel(interaction, payload) {
+    const full = { content: null, ...payload };
+    if (typeof interaction.isFromMessage === "function" && interaction.isFromMessage()) {
+        return interaction.update(full);
+    }
+    if (interaction.isButton?.()) {
+        return interaction.update(full);
+    }
+    return interaction.reply({ ...full, ephemeral: true });
+}
+
 // ============================================================
 // PAINÉIS (embed + botões)
 // ============================================================
@@ -185,6 +209,7 @@ async function handleButton(interaction) {
     if (action === "config_toggle_hwidreset") {
         const atual = SettingsStore.get("hwidResetAdminOnly");
         SettingsStore.set("hwidResetAdminOnly", !atual);
+        await logAction(interaction, `alterou "HWID reset restrito a admin" para ${!atual ? "sim" : "não"}`);
         return interaction.update(configPanel());
     }
 
@@ -246,10 +271,11 @@ async function handleButton(interaction) {
 
     if (action === "purge") {
         const removidas = KeyStore.purge(30);
+        await logAction(interaction, `limpou ${removidas.length} key(s) antiga(s) (30 dias)${removidas.length ? `: ${removidas.join(", ")}` : ""}`);
         const embed = new EmbedBuilder()
             .setTitle("🧹 Limpeza concluída")
             .setColor(0x8a3ffc)
-            .setDescription(`${removidas} key(s) revogada(s)/expirada(s) há mais de 30 dias foram removidas.`);
+            .setDescription(`${removidas.length} key(s) revogada(s)/expirada(s) há mais de 30 dias foram removidas.`);
         return interaction.update({ embeds: [embed], components: [backRow()] });
     }
 }
@@ -276,19 +302,20 @@ async function handleModalSubmit(interaction) {
             .setDescription(entries.map(e => `\`${e.key}\``).join("\n"))
             .addFields({ name: "Validade", value: fmtDate(entries[0].expiresAt) });
 
-        await interaction.reply({ embeds: [embed], components: [backRow()], ephemeral: true });
-        return notifyLogChannel(interaction, `🔑 ${quantidade} key(s) gerada(s) por <@${interaction.user.id}>.`);
+        await respondToPanel(interaction, { embeds: [embed], components: [backRow()] });
+        const keysList = entries.map(e => e.key).join(", ");
+        return logAction(interaction, `gerou ${quantidade} key(s): ${keysList}${nota ? ` (nota: "${nota}")` : ""}`);
     }
 
     if (action === "revoke") {
         const key = get("key");
         const ok = KeyStore.revoke(key);
-        await interaction.reply({
+        await respondToPanel(interaction, {
             content: ok ? `🔴 Key \`${key}\` revogada.` : `❌ Key \`${key}\` não encontrada.`,
-            components: [backRow()],
-            ephemeral: true
+            embeds: [],
+            components: [backRow()]
         });
-        if (ok) await notifyLogChannel(interaction, `🔴 Key \`${key}\` revogada por <@${interaction.user.id}>.`);
+        if (ok) await logAction(interaction, `revogou a key \`${key}\``);
         return;
     }
 
@@ -297,30 +324,31 @@ async function handleModalSubmit(interaction) {
         const dias = Number(get("dias"));
         const result = KeyStore.extend(key, dias);
         if (!result.ok) {
-            return interaction.reply({ content: `❌ Key \`${key}\` não encontrada.`, components: [backRow()], ephemeral: true });
+            return respondToPanel(interaction, { content: `❌ Key \`${key}\` não encontrada.`, embeds: [], components: [backRow()] });
         }
-        await interaction.reply({
+        await respondToPanel(interaction, {
             content: `✅ Key \`${key}\` renovada — nova validade: ${fmtDate(result.entry.expiresAt)}.`,
-            components: [backRow()],
-            ephemeral: true
+            embeds: [],
+            components: [backRow()]
         });
-        return notifyLogChannel(interaction, `📅 Key \`${key}\` renovada por +${dias} dias por <@${interaction.user.id}>.`);
+        return logAction(interaction, `renovou a key \`${key}\` por +${dias} dias`);
     }
 
     if (action === "purge") {
         const dias = Number(get("dias")) || 30;
         const removidas = KeyStore.purge(dias);
-        return interaction.reply({
-            content: `🧹 ${removidas} key(s) removida(s) (revogadas/expiradas há +${dias} dias).`,
-            components: [backRow()],
-            ephemeral: true
+        await respondToPanel(interaction, {
+            content: `🧹 ${removidas.length} key(s) removida(s) (revogadas/expiradas há +${dias} dias).`,
+            embeds: [],
+            components: [backRow()]
         });
+        return logAction(interaction, `limpou ${removidas.length} key(s) antiga(s) (+${dias} dias)${removidas.length ? `: ${removidas.join(", ")}` : ""}`);
     }
 
     if (action === "resetcode_generate") {
         const nota = get("nota") || "";
         const entry = ResetCodeStore.create({ note: nota });
-        return interaction.reply({
+        await respondToPanel(interaction, {
             embeds: [
                 new EmbedBuilder()
                     .setTitle("🔓 Código de reset gerado")
@@ -328,43 +356,48 @@ async function handleModalSubmit(interaction) {
                     .addFields({ name: "Código", value: `\`${entry.code}\`` }, { name: "Nota", value: nota || "—" })
                     .setFooter({ text: "Manda esse código pra quem comprou — usa em /key resethwid codigo:" })
             ],
-            components: [backRow()],
-            ephemeral: true
+            components: [backRow()]
         });
+        return logAction(interaction, `gerou o código de reset \`${entry.code}\`${nota ? ` (nota: "${nota}")` : ""}`);
     }
 
     if (action === "resetcode_revoke") {
         const codigo = get("codigo");
         const entry = ResetCodeStore.get(codigo);
-        if (!entry) return interaction.reply({ content: `❌ Código \`${codigo}\` não encontrado.`, components: [backRow()], ephemeral: true });
-        if (entry.used) return interaction.reply({ content: `❌ Código \`${codigo}\` já foi usado.`, components: [backRow()], ephemeral: true });
+        if (!entry) return respondToPanel(interaction, { content: `❌ Código \`${codigo}\` não encontrado.`, embeds: [], components: [backRow()] });
+        if (entry.used) return respondToPanel(interaction, { content: `❌ Código \`${codigo}\` já foi usado.`, embeds: [], components: [backRow()] });
         ResetCodeStore.revoke(codigo);
-        return interaction.reply({ content: `🗑️ Código \`${codigo}\` apagado.`, components: [backRow()], ephemeral: true });
+        await respondToPanel(interaction, { content: `🗑️ Código \`${codigo}\` apagado.`, embeds: [], components: [backRow()] });
+        return logAction(interaction, `apagou o código de reset \`${codigo}\``);
     }
 
     if (action === "config_expiry") {
         const dias = Number(get("dias"));
         SettingsStore.set("defaultExpiryDays", dias > 0 ? dias : null);
-        return interaction.reply({ content: `✅ Validade padrão: ${dias > 0 ? `${dias} dias` : "nunca expira"}.`, components: [backRow()], ephemeral: true });
+        await respondToPanel(interaction, configPanel());
+        return logAction(interaction, `definiu a validade padrão: ${dias > 0 ? `${dias} dias` : "nunca expira"}`);
     }
 
     if (action === "config_cooldown") {
         const horas = Number(get("horas"));
         SettingsStore.set("resetCooldownHours", horas > 0 ? horas : 0);
-        return interaction.reply({ content: `✅ Cooldown de reset: ${horas > 0 ? `${horas}h` : "desativado"}.`, components: [backRow()], ephemeral: true });
+        await respondToPanel(interaction, configPanel());
+        return logAction(interaction, `definiu o cooldown de reset: ${horas > 0 ? `${horas}h` : "desativado"}`);
     }
 
     if (action === "config_trialdays") {
         const dias = Number(get("dias"));
         SettingsStore.set("trialDays", dias > 0 ? dias : 0);
-        return interaction.reply({ content: `✅ Trial grátis: ${dias > 0 ? `${dias} dia(s)` : "desativado"}.`, components: [backRow()], ephemeral: true });
+        await respondToPanel(interaction, configPanel());
+        return logAction(interaction, `definiu o trial: ${dias > 0 ? `${dias} dia(s)` : "desativado"}`);
     }
 
     if (action === "config_logchannel") {
         const raw = get("canal");
         const id = raw ? raw.replace(/[<#>]/g, "") : null;
         SettingsStore.set("logChannelId", id || null);
-        return interaction.reply({ content: id ? `✅ Canal de log definido: <#${id}>.` : "✅ Canal de log desativado.", components: [backRow()], ephemeral: true });
+        await respondToPanel(interaction, configPanel());
+        return logAction(interaction, `definiu o canal de log: ${id ? `<#${id}>` : "desativado"}`);
     }
 }
 
