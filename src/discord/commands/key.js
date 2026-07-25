@@ -2,8 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
 const KeyStore = require("../../store/keyStore");
 const SettingsStore = require("../../store/settingsStore");
 const ResetCodeStore = require("../../store/resetCodeStore");
-const { isAdmin } = require("../../utils/permissions");
-const logger = require("../../utils/logger");
+const TrialStore = require("../../store/trialStore");
 
 function fmtDate(ts) {
     return ts ? new Date(ts).toLocaleString("pt-BR") : "nunca";
@@ -15,44 +14,15 @@ function statusOf(entry) {
     return "🟢 Ativa";
 }
 
-async function notifyLogChannel(interaction, text) {
-    const channelId = SettingsStore.get("logChannelId");
-    if (!channelId) return;
-    try {
-        const channel = await interaction.client.channels.fetch(channelId);
-        if (channel?.isTextBased()) await channel.send(text);
-    } catch (err) {
-        logger.warn(`Falha ao enviar log no canal configurado -> ${err.message}`);
-    }
-}
-
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("key")
-        .setDescription("Gerenciar keys de acesso do hub")
+        .setDescription("Comandos de key pra uso pessoal")
         .addSubcommand(sub =>
-            sub.setName("generate")
-                .setDescription("[admin] Gera uma nova key")
-                .addIntegerOption(opt =>
-                    opt.setName("dias")
-                        .setDescription("Validade em dias (deixe vazio pra usar o padrão configurado)")
-                        .setRequired(false)
-                )
+            sub.setName("redeem")
+                .setDescription("Resgata uma key e vincula à sua conta do Discord")
                 .addStringOption(opt =>
-                    opt.setName("nota")
-                        .setDescription("Nota interna (ex: nome do comprador)")
-                        .setRequired(false)
-                )
-        )
-        .addSubcommand(sub =>
-            sub.setName("list")
-                .setDescription("[admin] Lista todas as keys")
-        )
-        .addSubcommand(sub =>
-            sub.setName("revoke")
-                .setDescription("[admin] Revoga uma key")
-                .addStringOption(opt =>
-                    opt.setName("key").setDescription("A key a revogar").setRequired(true)
+                    opt.setName("key").setDescription("A key recebida").setRequired(true)
                 )
         )
         .addSubcommand(sub =>
@@ -60,13 +30,6 @@ module.exports = {
                 .setDescription("Verifica o status de uma key")
                 .addStringOption(opt =>
                     opt.setName("key").setDescription("A key a verificar").setRequired(true)
-                )
-        )
-        .addSubcommand(sub =>
-            sub.setName("redeem")
-                .setDescription("Resgata uma key e vincula à sua conta do Discord")
-                .addStringOption(opt =>
-                    opt.setName("key").setDescription("A key recebida").setRequired(true)
                 )
         )
         .addSubcommand(sub =>
@@ -80,79 +43,14 @@ module.exports = {
                         .setDescription("Código de reset comprado (pula o cooldown)")
                         .setRequired(false)
                 )
+        )
+        .addSubcommand(sub =>
+            sub.setName("trial")
+                .setDescription("Pega uma key de teste grátis (1 por pessoa)")
         ),
 
     async execute(interaction) {
         const sub = interaction.options.getSubcommand();
-
-        // --- generate ---
-        if (sub === "generate") {
-            if (!isAdmin(interaction)) {
-                return interaction.reply({ content: "❌ Só admins podem gerar keys.", ephemeral: true });
-            }
-            const dias = interaction.options.getInteger("dias") ?? SettingsStore.get("defaultExpiryDays");
-            const nota = interaction.options.getString("nota") ?? "";
-            const entry = KeyStore.create({ daysValid: dias, note: nota });
-
-            await interaction.reply({
-                embeds: [
-                    new EmbedBuilder()
-                        .setTitle("🔑 Key gerada")
-                        .setColor(0x8a3ffc)
-                        .addFields(
-                            { name: "Key", value: `\`${entry.key}\`` },
-                            { name: "Validade", value: fmtDate(entry.expiresAt), inline: true },
-                            { name: "Nota", value: nota || "—", inline: true }
-                        )
-                ],
-                ephemeral: true
-            });
-
-            await notifyLogChannel(interaction, `🔑 Key \`${entry.key}\` gerada por <@${interaction.user.id}>.`);
-            return;
-        }
-
-        // --- list ---
-        if (sub === "list") {
-            if (!isAdmin(interaction)) {
-                return interaction.reply({ content: "❌ Só admins podem listar keys.", ephemeral: true });
-            }
-            const all = KeyStore.list();
-            if (all.length === 0) {
-                return interaction.reply({ content: "Nenhuma key cadastrada ainda.", ephemeral: true });
-            }
-
-            const lines = all
-                .slice(0, 25) // limite de campos de embed
-                .map(e => `\`${e.key}\` — ${statusOf(e)} — ${e.discordId ? `<@${e.discordId}>` : "não resgatada"}`);
-
-            await interaction.reply({
-                embeds: [
-                    new EmbedBuilder()
-                        .setTitle(`🔑 Keys cadastradas (${all.length})`)
-                        .setDescription(lines.join("\n"))
-                        .setColor(0x8a3ffc)
-                        .setFooter(all.length > 25 ? { text: "Mostrando as 25 primeiras" } : null)
-                ],
-                ephemeral: true
-            });
-            return;
-        }
-
-        // --- revoke ---
-        if (sub === "revoke") {
-            if (!isAdmin(interaction)) {
-                return interaction.reply({ content: "❌ Só admins podem revogar keys.", ephemeral: true });
-            }
-            const key = interaction.options.getString("key").trim();
-            const ok = KeyStore.revoke(key);
-            await interaction.reply({
-                content: ok ? `🔴 Key \`${key}\` revogada.` : `❌ Key \`${key}\` não encontrada.`,
-                ephemeral: true
-            });
-            if (ok) await notifyLogChannel(interaction, `🔴 Key \`${key}\` revogada por <@${interaction.user.id}>.`);
-            return;
-        }
 
         // --- check ---
         if (sub === "check") {
@@ -161,7 +59,7 @@ module.exports = {
             if (!entry) {
                 return interaction.reply({ content: `❌ Key \`${key}\` não encontrada.`, ephemeral: true });
             }
-            await interaction.reply({
+            return interaction.reply({
                 embeds: [
                     new EmbedBuilder()
                         .setTitle(`🔑 ${key}`)
@@ -175,7 +73,6 @@ module.exports = {
                 ],
                 ephemeral: true
             });
-            return;
         }
 
         // --- redeem ---
@@ -192,10 +89,7 @@ module.exports = {
             if (!result.ok) {
                 return interaction.reply({ content: reasons[result.reason] || "❌ Erro ao resgatar.", ephemeral: true });
             }
-
-            await interaction.reply({ content: `✅ Key \`${key}\` vinculada à sua conta!`, ephemeral: true });
-            await notifyLogChannel(interaction, `✅ Key \`${key}\` resgatada por <@${interaction.user.id}>.`);
-            return;
+            return interaction.reply({ content: `✅ Key \`${key}\` vinculada à sua conta!`, ephemeral: true });
         }
 
         // --- resethwid ---
@@ -210,16 +104,14 @@ module.exports = {
 
             const requireAdmin = SettingsStore.get("hwidResetAdminOnly");
             const ownsKey = entry.discordId === interaction.user.id;
-            const admin = isAdmin(interaction);
 
-            if (requireAdmin && !admin && !codigo) {
-                return interaction.reply({ content: "❌ Reset de HWID está restrito a admins (ou use um código de reset).", ephemeral: true });
+            if (requireAdmin && !codigo) {
+                return interaction.reply({ content: "❌ Reset de HWID está restrito (use um código de reset ou peça a um admin).", ephemeral: true });
             }
-            if (!requireAdmin && !ownsKey && !admin && !codigo) {
+            if (!requireAdmin && !ownsKey && !codigo) {
                 return interaction.reply({ content: "❌ Essa key não é sua.", ephemeral: true });
             }
 
-            // Se veio um código, ele precisa ser válido — e aí pula o cooldown de vez.
             let usedCode = null;
             if (codigo) {
                 const result = ResetCodeStore.use(codigo.trim(), key, interaction.user.id);
@@ -231,8 +123,7 @@ module.exports = {
                     return interaction.reply({ content: reasons[result.reason] || "❌ Código inválido.", ephemeral: true });
                 }
                 usedCode = result.entry;
-            } else if (!admin) {
-                // Sem código e sem ser admin: respeita o cooldown configurado.
+            } else {
                 const cooldownHours = SettingsStore.get("resetCooldownHours");
                 const remaining = KeyStore.cooldownRemaining(key, cooldownHours);
                 if (remaining > 0) {
@@ -245,17 +136,41 @@ module.exports = {
             }
 
             KeyStore.resetHwid(key);
-            await interaction.reply({
+            return interaction.reply({
                 content: usedCode
                     ? `🔄 HWID da key \`${key}\` resetado (código \`${usedCode.code}\` consumido).`
                     : `🔄 HWID da key \`${key}\` resetado.`,
                 ephemeral: true
             });
-            await notifyLogChannel(
-                interaction,
-                `🔄 HWID da key \`${key}\` resetado por <@${interaction.user.id}>${usedCode ? ` usando código \`${usedCode.code}\`` : ""}.`
-            );
-            return;
+        }
+
+        // --- trial ---
+        if (sub === "trial") {
+            const trialDays = SettingsStore.get("trialDays");
+            if (!trialDays || trialDays <= 0) {
+                return interaction.reply({ content: "❌ O trial grátis está desativado atualmente.", ephemeral: true });
+            }
+            if (TrialStore.hasClaimed(interaction.user.id)) {
+                return interaction.reply({ content: "❌ Você já pegou sua key de trial antes — só é permitida uma por pessoa.", ephemeral: true });
+            }
+
+            const entry = KeyStore.create({ daysValid: trialDays, note: `trial (${interaction.user.tag})` });
+            KeyStore.redeem(entry.key, interaction.user.id);
+            TrialStore.markClaimed(interaction.user.id, entry.key);
+
+            return interaction.reply({
+                embeds: [
+                    new EmbedBuilder()
+                        .setTitle("🎁 Key de trial")
+                        .setColor(0xf1c40f)
+                        .addFields(
+                            { name: "Key", value: `\`${entry.key}\`` },
+                            { name: "Validade", value: fmtDate(entry.expiresAt) }
+                        )
+                        .setFooter({ text: "Só é permitido 1 trial por pessoa." })
+                ],
+                ephemeral: true
+            });
         }
     }
 };
