@@ -3,6 +3,7 @@ const path = require("path");
 const { Client, GatewayIntentBits, Collection } = require("discord.js");
 const config = require("../config");
 const logger = require("../utils/logger");
+const adminPanel = require("./adminPanel");
 
 function createClient() {
     const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -24,15 +25,24 @@ function createClient() {
     logger.info(`${client.commands.size} comando(s) carregado(s): ${[...client.commands.keys()].join(", ")}`);
 
     client.on("interactionCreate", async (interaction) => {
-        if (!interaction.isChatInputCommand()) return;
-        const command = client.commands.get(interaction.commandName);
-        if (!command) return;
-
         try {
-            await command.execute(interaction);
+            // Slash commands (/key, /admin, /help)
+            if (interaction.isChatInputCommand()) {
+                const command = client.commands.get(interaction.commandName);
+                if (!command) return;
+                return await command.execute(interaction);
+            }
+
+            // Botões e modais do painel admin usam customId "admin:..." / "admin_modal:..."
+            if (interaction.isButton() && interaction.customId.startsWith("admin:")) {
+                return await adminPanel.handleButton(interaction);
+            }
+            if (interaction.isModalSubmit() && interaction.customId.startsWith("admin_modal:")) {
+                return await adminPanel.handleModalSubmit(interaction);
+            }
         } catch (err) {
-            logger.error(`Erro ao executar /${interaction.commandName} -> ${err.stack || err}`);
-            const payload = { content: "❌ Ocorreu um erro ao executar esse comando.", ephemeral: true };
+            logger.error(`Erro ao processar interação -> ${err.stack || err}`);
+            const payload = { content: "❌ Ocorreu um erro ao processar isso.", ephemeral: true };
             if (interaction.replied || interaction.deferred) {
                 await interaction.followUp(payload).catch(() => {});
             } else {
