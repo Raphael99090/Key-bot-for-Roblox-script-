@@ -104,7 +104,7 @@ cargo definido em `ADMIN_ROLE_ID` no `.env`.
 ### Passo a passo
 
 ```bash
-git clone <url-do-seu-repo>
+git clone <https://github.com/Raphael99090/Key-bot-for-Roblox-script->
 cd keybot
 npm install
 cp .env.example .env
