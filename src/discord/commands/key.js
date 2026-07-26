@@ -1,9 +1,10 @@
-const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
+const { SlashCommandBuilder } = require("discord.js");
 const KeyStore = require("../../store/keyStore");
 const SettingsStore = require("../../store/settingsStore");
 const ResetCodeStore = require("../../store/resetCodeStore");
 const TrialStore = require("../../store/trialStore");
 const { fmtDuration } = require("../../utils/format");
+const { panel, v2Payload } = require("../v2");
 
 function fmtDate(ts) {
     return ts ? new Date(ts).toLocaleString("pt-BR") : "nunca";
@@ -60,20 +61,16 @@ module.exports = {
             if (!entry) {
                 return interaction.reply({ content: `❌ Key \`${key}\` não encontrada.`, ephemeral: true });
             }
-            return interaction.reply({
-                embeds: [
-                    new EmbedBuilder()
-                        .setTitle(`🔑 ${key}`)
-                        .setColor(0x8a3ffc)
-                        .addFields(
-                            { name: "Status", value: statusOf(entry), inline: true },
-                            { name: "Expira", value: fmtDate(entry.expiresAt), inline: true },
-                            { name: "Resgatada por", value: entry.discordId ? `<@${entry.discordId}>` : "ninguém", inline: true },
-                            { name: "HWID vinculado", value: entry.hwid ? "sim" : "não", inline: true }
-                        )
-                ],
-                ephemeral: true
+            const container = panel({
+                title: `🔑 ${key}`,
+                fields: [
+                    { name: "Status", value: statusOf(entry) },
+                    { name: "Expira", value: fmtDate(entry.expiresAt) },
+                    { name: "Resgatada por", value: entry.discordId ? `<@${entry.discordId}>` : "ninguém" },
+                    { name: "HWID vinculado", value: entry.hwid ? "sim" : "não" }
+                ]
             });
+            return interaction.reply(v2Payload(container, [], { ephemeral: true }));
         }
 
         // --- redeem ---
@@ -158,19 +155,16 @@ module.exports = {
             KeyStore.redeem(entry.key, interaction.user.id);
             TrialStore.markClaimed(interaction.user.id, entry.key);
 
-            return interaction.reply({
-                embeds: [
-                    new EmbedBuilder()
-                        .setTitle("🎁 Key de trial")
-                        .setColor(0xf1c40f)
-                        .addFields(
-                            { name: "Key", value: `\`${entry.key}\`` },
-                            { name: "Validade", value: fmtDate(entry.expiresAt) }
-                        )
-                        .setFooter({ text: "Só é permitido 1 trial por pessoa." })
+            const container = panel({
+                title: "🎁 Key de trial",
+                color: 0xf1c40f,
+                fields: [
+                    { name: "Key", value: `\`${entry.key}\`` },
+                    { name: "Validade", value: fmtDate(entry.expiresAt) }
                 ],
-                ephemeral: true
+                footer: "Só é permitido 1 trial por pessoa."
             });
+            return interaction.reply(v2Payload(container, [], { ephemeral: true }));
         }
     }
 };

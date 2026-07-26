@@ -1,17 +1,18 @@
 const {
-    EmbedBuilder,
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
     ModalBuilder,
     TextInputBuilder,
-    TextInputStyle
+    TextInputStyle,
+    MessageFlags
 } = require("discord.js");
 const KeyStore = require("../store/keyStore");
 const SettingsStore = require("../store/settingsStore");
 const ResetCodeStore = require("../store/resetCodeStore");
 const { isAdmin } = require("../utils/permissions");
 const logger = require("../utils/logger");
+const { panel, v2Payload } = require("./v2");
 
 function fmtDate(ts) {
     return ts ? new Date(ts).toLocaleString("pt-BR") : "nunca";
@@ -41,32 +42,35 @@ async function logAction(interaction, plainText) {
 }
 
 /**
- * Responde a uma interação de painel edatando a MESMA mensagem em vez de
+ * Responde a uma interação de painel editando a MESMA mensagem em vez de
  * mandar uma nova. Funciona tanto pra botão (sempre editável) quanto pra
  * modal (editável quando o modal foi aberto a partir de um componente da
  * mensagem, que é sempre o nosso caso). Se por algum motivo não for
  * possível editar, cai pra um reply ephemeral como último recurso.
+ * O payload já vem pronto de v2Payload() (com a flag de Components V2).
  */
 async function respondToPanel(interaction, payload) {
-    const full = { content: null, ...payload };
     if (typeof interaction.isFromMessage === "function" && interaction.isFromMessage()) {
-        return interaction.update(full);
+        return interaction.update(payload);
     }
     if (interaction.isButton?.()) {
-        return interaction.update(full);
+        return interaction.update(payload);
     }
-    return interaction.reply({ ...full, ephemeral: true });
+    // Fallback ephemeral: combina a flag de Ephemeral com a de Components V2
+    // já presente no payload, em vez de usar o atalho `ephemeral: true`
+    // (não dá pra misturar os dois jeitos na mesma resposta).
+    return interaction.reply({ ...payload, flags: payload.flags | MessageFlags.Ephemeral });
 }
 
 // ============================================================
-// PAINÉIS (embed + botões)
+// PAINÉIS (Container + botões)
 // ============================================================
 
 function mainPanel() {
-    const embed = new EmbedBuilder()
-        .setTitle("🛠️ Painel Admin — 1NXITER KeyBot")
-        .setColor(0x8a3ffc)
-        .setDescription("Escolha uma ação abaixo.");
+    const container = panel({
+        title: "🛠️ Painel Admin — 1NXITER KeyBot",
+        description: "Escolha uma ação abaixo."
+    });
 
     const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:generate").setLabel("Gerar Key").setEmoji("🔑").setStyle(ButtonStyle.Success),
@@ -90,21 +94,21 @@ function mainPanel() {
         new ButtonBuilder().setCustomId("admin:payments").setLabel("Vendas / Pagamentos").setEmoji("💳").setStyle(ButtonStyle.Secondary)
     );
 
-    return { embeds: [embed], components: [row1, row2, row3, row4] };
+    return v2Payload(container, [row1, row2, row3, row4]);
 }
 
 function configPanel() {
     const s = SettingsStore.getAll();
-    const embed = new EmbedBuilder()
-        .setTitle("⚙️ Configurações")
-        .setColor(0x8a3ffc)
-        .addFields(
-            { name: "Validade padrão", value: s.defaultExpiryDays ? `${s.defaultExpiryDays} dias` : "nunca expira", inline: true },
-            { name: "Cooldown reset HWID", value: s.resetCooldownHours ? `${s.resetCooldownHours}h` : "sem cooldown", inline: true },
-            { name: "Validade do trial", value: s.trialDays ? `${s.trialDays} dia(s)` : "desativado", inline: true },
-            { name: "Reset HWID restrito a admin", value: s.hwidResetAdminOnly ? "sim" : "não", inline: true },
-            { name: "Canal de log", value: s.logChannelId ? `<#${s.logChannelId}>` : "desativado", inline: true }
-        );
+    const container = panel({
+        title: "⚙️ Configurações",
+        fields: [
+            { name: "Validade padrão", value: s.defaultExpiryDays ? `${s.defaultExpiryDays} dias` : "nunca expira" },
+            { name: "Cooldown reset HWID", value: s.resetCooldownHours ? `${s.resetCooldownHours}h` : "sem cooldown" },
+            { name: "Validade do trial", value: s.trialDays ? `${s.trialDays} dia(s)` : "desativado" },
+            { name: "Reset HWID restrito a admin", value: s.hwidResetAdminOnly ? "sim" : "não" },
+            { name: "Canal de log", value: s.logChannelId ? `<#${s.logChannelId}>` : "desativado" }
+        ]
+    });
 
     const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:config_expiry").setLabel("Validade padrão").setStyle(ButtonStyle.Secondary),
@@ -119,24 +123,24 @@ function configPanel() {
         new ButtonBuilder().setCustomId("admin:back").setLabel("⬅️ Voltar").setStyle(ButtonStyle.Secondary)
     );
 
-    return { embeds: [embed], components: [row1, row2, row3] };
+    return v2Payload(container, [row1, row2, row3]);
 }
 
 function paymentsPanel() {
     const s = SettingsStore.getAll();
     const preview = (text) => (text ? (text.length > 60 ? `${text.slice(0, 60)}…` : text) : "não configurado");
 
-    const embed = new EmbedBuilder()
-        .setTitle("💳 Vendas / Pagamentos")
-        .setColor(0x8a3ffc)
-        .setDescription("Configure as instruções que o cliente vê em `/comprar`, e o canal onde os pedidos aparecem pra você confirmar.")
-        .addFields(
+    const container = panel({
+        title: "💳 Vendas / Pagamentos",
+        description: "Configure as instruções que o cliente vê em `/comprar`, e o canal onde os pedidos aparecem pra você confirmar.",
+        fields: [
             { name: "Pix", value: preview(s.paymentInfo?.pix) },
             { name: "Bitcoin", value: preview(s.paymentInfo?.btc) },
             { name: "Cartão", value: preview(s.paymentInfo?.card) },
             { name: "Moeda local", value: preview(s.paymentInfo?.local) },
             { name: "Canal de pedidos", value: s.salesChannelId ? `<#${s.salesChannelId}>` : (s.logChannelId ? `<#${s.logChannelId}> (canal de log)` : "não configurado") }
-        );
+        ]
+    });
 
     const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:payment_pix").setLabel("Editar Pix").setStyle(ButtonStyle.Secondary),
@@ -151,7 +155,7 @@ function paymentsPanel() {
         new ButtonBuilder().setCustomId("admin:back").setLabel("⬅️ Voltar").setStyle(ButtonStyle.Secondary)
     );
 
-    return { embeds: [embed], components: [row1, row2, row3] };
+    return v2Payload(container, [row1, row2, row3]);
 }
 
 function backRow() {
@@ -169,16 +173,13 @@ function keyListPanel(page = 0) {
     const safePage = Math.min(Math.max(page, 0), totalPages - 1);
     const slice = all.slice(safePage * KEYS_PER_PAGE, safePage * KEYS_PER_PAGE + KEYS_PER_PAGE);
 
-    const embed = new EmbedBuilder()
-        .setTitle(`🔑 Keys cadastradas (${all.length})`)
-        .setColor(0x8a3ffc)
-        .setFooter({ text: `Página ${safePage + 1} de ${totalPages}` });
-
-    embed.setDescription(
-        slice.length === 0
+    const container = panel({
+        title: `🔑 Keys cadastradas (${all.length})`,
+        description: slice.length === 0
             ? "Nenhuma key cadastrada ainda."
-            : slice.map(e => `\`${e.key}\` — ${statusOf(e)} — ${e.discordId ? `<@${e.discordId}>` : "não resgatada"}`).join("\n")
-    );
+            : slice.map(e => `\`${e.key}\` — ${statusOf(e)} — ${e.discordId ? `<@${e.discordId}>` : "não resgatada"}`).join("\n"),
+        footer: `Página ${safePage + 1} de ${totalPages}`
+    });
 
     const nav = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -193,26 +194,23 @@ function keyListPanel(page = 0) {
             .setDisabled(safePage >= totalPages - 1)
     );
 
-    return { embeds: [embed], components: [nav, backRow()] };
+    return v2Payload(container, [nav, backRow()]);
 }
 
 /** Painel de confirmação genérico, usado antes de qualquer ação destrutiva. */
 function confirmPanel({ title, description, confirmCustomId, confirmLabel = "Confirmar", danger = true }) {
-    const embed = new EmbedBuilder()
-        .setTitle(title)
-        .setColor(danger ? 0xe74c3c : 0x8a3ffc)
-        .setDescription(description);
+    const container = panel({ title, description, color: danger ? 0xe74c3c : 0x8a3ffc });
 
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(confirmCustomId).setLabel(confirmLabel).setStyle(danger ? ButtonStyle.Danger : ButtonStyle.Primary).setEmoji("✅"),
         new ButtonBuilder().setCustomId("admin:back").setLabel("Cancelar").setStyle(ButtonStyle.Secondary).setEmoji("✖️")
     );
 
-    return { embeds: [embed], components: [row] };
+    return v2Payload(container, [row]);
 }
 
 // ============================================================
-// MODAIS (formulários pra pedir input)
+// MODAIS (formulários pra pedir input — não são afetados por Components V2)
 // ============================================================
 
 function modal(customId, title, fields) {
@@ -326,18 +324,20 @@ async function handleButton(interaction) {
 
     if (action === "resetcode_list") {
         const all = ResetCodeStore.list();
-        const embed = new EmbedBuilder().setTitle(`🔓 Códigos de reset (${all.length})`).setColor(0x2ecc71);
-        if (all.length === 0) {
-            embed.setDescription("Nenhum código gerado ainda.");
-        } else {
-            const lines = all.slice(0, 25).map(c => {
+        const lines = all.length === 0
+            ? "Nenhum código gerado ainda."
+            : all.slice(0, 25).map(c => {
                 const status = c.used ? `🔴 usado (key \`${c.usedOnKey}\`)` : "🟢 disponível";
                 return `\`${c.code}\` — ${status}${c.note ? ` — _${c.note}_` : ""}`;
-            });
-            embed.setDescription(lines.join("\n"));
-            if (all.length > 25) embed.setFooter({ text: "Mostrando os 25 primeiros" });
-        }
-        return interaction.update({ embeds: [embed], components: [backRow()] });
+            }).join("\n");
+
+        const container = panel({
+            title: `🔓 Códigos de reset (${all.length})`,
+            description: lines,
+            color: 0x2ecc71,
+            footer: all.length > 25 ? "Mostrando os 25 primeiros" : null
+        });
+        return interaction.update(v2Payload(container, [backRow()]));
     }
 
     if (action === "stats") {
@@ -351,20 +351,20 @@ async function handleButton(interaction) {
         const codigos = ResetCodeStore.list();
         const codigosUsados = codigos.filter(c => c.used).length;
 
-        const embed = new EmbedBuilder()
-            .setTitle("📊 Estatísticas")
-            .setColor(0x8a3ffc)
-            .addFields(
-                { name: "🔑 Total de keys", value: String(keys.length), inline: true },
-                { name: "🟢 Ativas", value: String(ativas), inline: true },
-                { name: "🟠 Expiradas", value: String(expiradas), inline: true },
-                { name: "🔴 Revogadas", value: String(revogadas), inline: true },
-                { name: "✅ Resgatadas", value: String(resgatadas), inline: true },
-                { name: "🎁 Trials", value: String(trials), inline: true },
-                { name: "🔓 Códigos gerados", value: String(codigos.length), inline: true },
-                { name: "💰 Códigos vendidos", value: String(codigosUsados), inline: true }
-            );
-        return interaction.update({ embeds: [embed], components: [backRow()] });
+        const container = panel({
+            title: "📊 Estatísticas",
+            fields: [
+                { name: "🔑 Total de keys", value: String(keys.length) },
+                { name: "🟢 Ativas", value: String(ativas) },
+                { name: "🟠 Expiradas", value: String(expiradas) },
+                { name: "🔴 Revogadas", value: String(revogadas) },
+                { name: "✅ Resgatadas", value: String(resgatadas) },
+                { name: "🎁 Trials", value: String(trials) },
+                { name: "🔓 Códigos gerados", value: String(codigos.length) },
+                { name: "💰 Códigos vendidos", value: String(codigosUsados) }
+            ]
+        });
+        return interaction.update(v2Payload(container, [backRow()]));
     }
 
     // "purge" (botão rápido, 30 dias) só mostra a PRÉVIA — quem apaga de
@@ -385,21 +385,21 @@ async function handleButton(interaction) {
         const dias = Number(param) || 30;
         const removidas = KeyStore.purge(dias);
         await logAction(interaction, `limpou ${removidas.length} key(s) antiga(s) (+${dias} dias)${removidas.length ? `: ${removidas.join(", ")}` : ""}`);
-        const embed = new EmbedBuilder()
-            .setTitle("🧹 Limpeza concluída")
-            .setColor(0x8a3ffc)
-            .setDescription(`${removidas.length} key(s) revogada(s)/expirada(s) há mais de ${dias} dias foram removidas.`);
-        return interaction.update({ embeds: [embed], components: [backRow()] });
+        const container = panel({
+            title: "🧹 Limpeza concluída",
+            description: `${removidas.length} key(s) revogada(s)/expirada(s) há mais de ${dias} dias foram removidas.`
+        });
+        return interaction.update(v2Payload(container, [backRow()]));
     }
 
     if (action === "confirm_revoke") {
         const key = param;
         const ok = KeyStore.revoke(key);
-        await interaction.update({
-            content: ok ? `🔴 Key \`${key}\` revogada.` : `❌ Key \`${key}\` não encontrada.`,
-            embeds: [],
-            components: [backRow()]
+        const container = panel({
+            title: ok ? "🔴 Key revogada" : "❌ Key não encontrada",
+            description: ok ? `A key \`${key}\` foi revogada.` : `Não achei a key \`${key}\`.`
         });
+        await interaction.update(v2Payload(container, [backRow()]));
         if (ok) await logAction(interaction, `revogou a key \`${key}\``);
         return;
     }
@@ -421,13 +421,13 @@ async function handleModalSubmit(interaction) {
         const entries = [];
         for (let i = 0; i < quantidade; i++) entries.push(KeyStore.create({ daysValid: dias, note: nota }));
 
-        const embed = new EmbedBuilder()
-            .setTitle(quantidade === 1 ? "🔑 Key gerada" : `🔑 ${quantidade} keys geradas`)
-            .setColor(0x8a3ffc)
-            .setDescription(entries.map(e => `\`${e.key}\``).join("\n"))
-            .addFields({ name: "Validade", value: fmtDate(entries[0].expiresAt) });
+        const container = panel({
+            title: quantidade === 1 ? "🔑 Key gerada" : `🔑 ${quantidade} keys geradas`,
+            description: entries.map(e => `\`${e.key}\``).join("\n"),
+            fields: [{ name: "Validade", value: fmtDate(entries[0].expiresAt) }]
+        });
 
-        await respondToPanel(interaction, { embeds: [embed], components: [backRow()] });
+        await respondToPanel(interaction, v2Payload(container, [backRow()]));
         const keysList = entries.map(e => e.key).join(", ");
         return logAction(interaction, `gerou ${quantidade} key(s): ${keysList}${nota ? ` (nota: "${nota}")` : ""}`);
     }
@@ -436,7 +436,8 @@ async function handleModalSubmit(interaction) {
         const key = get("key");
         const entry = KeyStore.get(key);
         if (!entry) {
-            return respondToPanel(interaction, { content: `❌ Key \`${key}\` não encontrada.`, embeds: [], components: [backRow()] });
+            const container = panel({ title: "❌ Key não encontrada", description: `Não achei a key \`${key}\`.` });
+            return respondToPanel(interaction, v2Payload(container, [backRow()]));
         }
         return respondToPanel(interaction, confirmPanel({
             title: "🗑️ Confirmar revogação",
@@ -451,13 +452,14 @@ async function handleModalSubmit(interaction) {
         const dias = Number(get("dias"));
         const result = KeyStore.extend(key, dias);
         if (!result.ok) {
-            return respondToPanel(interaction, { content: `❌ Key \`${key}\` não encontrada.`, embeds: [], components: [backRow()] });
+            const container = panel({ title: "❌ Key não encontrada", description: `Não achei a key \`${key}\`.` });
+            return respondToPanel(interaction, v2Payload(container, [backRow()]));
         }
-        await respondToPanel(interaction, {
-            content: `✅ Key \`${key}\` renovada — nova validade: ${fmtDate(result.entry.expiresAt)}.`,
-            embeds: [],
-            components: [backRow()]
+        const container = panel({
+            title: "✅ Key renovada",
+            description: `Key \`${key}\` — nova validade: ${fmtDate(result.entry.expiresAt)}.`
         });
+        await respondToPanel(interaction, v2Payload(container, [backRow()]));
         return logAction(interaction, `renovou a key \`${key}\` por +${dias} dias`);
     }
 
@@ -477,26 +479,30 @@ async function handleModalSubmit(interaction) {
     if (action === "resetcode_generate") {
         const nota = get("nota") || "";
         const entry = ResetCodeStore.create({ note: nota });
-        await respondToPanel(interaction, {
-            embeds: [
-                new EmbedBuilder()
-                    .setTitle("🔓 Código de reset gerado")
-                    .setColor(0x2ecc71)
-                    .addFields({ name: "Código", value: `\`${entry.code}\`` }, { name: "Nota", value: nota || "—" })
-                    .setFooter({ text: "Manda esse código pra quem comprou — usa em /key resethwid codigo:" })
-            ],
-            components: [backRow()]
+        const container = panel({
+            title: "🔓 Código de reset gerado",
+            color: 0x2ecc71,
+            fields: [{ name: "Código", value: `\`${entry.code}\`` }, { name: "Nota", value: nota || "—" }],
+            footer: "Manda esse código pra quem comprou — usa em /key resethwid codigo:"
         });
+        await respondToPanel(interaction, v2Payload(container, [backRow()]));
         return logAction(interaction, `gerou o código de reset \`${entry.code}\`${nota ? ` (nota: "${nota}")` : ""}`);
     }
 
     if (action === "resetcode_revoke") {
         const codigo = get("codigo");
         const entry = ResetCodeStore.get(codigo);
-        if (!entry) return respondToPanel(interaction, { content: `❌ Código \`${codigo}\` não encontrado.`, embeds: [], components: [backRow()] });
-        if (entry.used) return respondToPanel(interaction, { content: `❌ Código \`${codigo}\` já foi usado.`, embeds: [], components: [backRow()] });
+        if (!entry) {
+            const container = panel({ title: "❌ Código não encontrado", description: `Não achei o código \`${codigo}\`.` });
+            return respondToPanel(interaction, v2Payload(container, [backRow()]));
+        }
+        if (entry.used) {
+            const container = panel({ title: "❌ Código já usado", description: `O código \`${codigo}\` já foi usado.` });
+            return respondToPanel(interaction, v2Payload(container, [backRow()]));
+        }
         ResetCodeStore.revoke(codigo);
-        await respondToPanel(interaction, { content: `🗑️ Código \`${codigo}\` apagado.`, embeds: [], components: [backRow()] });
+        const container = panel({ title: "🗑️ Código apagado", description: `Código \`${codigo}\` apagado.` });
+        await respondToPanel(interaction, v2Payload(container, [backRow()]));
         return logAction(interaction, `apagou o código de reset \`${codigo}\``);
     }
 

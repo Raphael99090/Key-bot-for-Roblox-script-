@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require("discord.js");
+const { SlashCommandBuilder, MessageFlags } = require("discord.js");
 const { initialPanel } = require("../storePanel");
 
 module.exports = {
@@ -7,6 +7,7 @@ module.exports = {
         .setDescription("Comprar uma key do hub"),
 
     async execute(interaction) {
-        return interaction.reply({ ...initialPanel(), ephemeral: true });
+        const payload = initialPanel();
+        return interaction.reply({ ...payload, flags: payload.flags | MessageFlags.Ephemeral });
     }
 };

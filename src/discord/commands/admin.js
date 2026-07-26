@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require("discord.js");
+const { SlashCommandBuilder, MessageFlags } = require("discord.js");
 const { isAdmin } = require("../../utils/permissions");
 const { mainPanel } = require("../adminPanel");
 
@@ -11,6 +11,7 @@ module.exports = {
         if (!isAdmin(interaction)) {
             return interaction.reply({ content: "❌ Só admins podem abrir esse painel.", ephemeral: true });
         }
-        return interaction.reply({ ...mainPanel(), ephemeral: true });
+        const payload = mainPanel();
+        return interaction.reply({ ...payload, flags: payload.flags | MessageFlags.Ephemeral });
     }
 };

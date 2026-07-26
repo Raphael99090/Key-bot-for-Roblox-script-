@@ -1,5 +1,4 @@
 const {
-    EmbedBuilder,
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
@@ -10,6 +9,7 @@ const SettingsStore = require("../store/settingsStore");
 const OrderStore = require("../store/orderStore");
 const { isAdmin } = require("../utils/permissions");
 const logger = require("../utils/logger");
+const { panel, v2Payload } = require("./v2");
 
 const { PAYMENT_METHODS } = SettingsStore;
 
@@ -36,12 +36,11 @@ function methodSelectRow() {
 }
 
 function initialPanel() {
-    const embed = new EmbedBuilder()
-        .setTitle("🛒 Comprar key — 1NXITER HUB")
-        .setColor(0x8a3ffc)
-        .setDescription("Escolha como você quer pagar. Depois de pagar, você confirma pra gente aqui mesmo, e a key é enviada no seu privado assim que o pagamento for aprovado.");
-
-    return { embeds: [embed], components: [methodSelectRow()] };
+    const container = panel({
+        title: "🛒 Comprar key — 1NXITER HUB",
+        description: "Escolha como você quer pagar. Depois de pagar, você confirma pra gente aqui mesmo, e a key é enviada no seu privado assim que o pagamento for aprovado."
+    });
+    return v2Payload(container, [methodSelectRow()]);
 }
 
 function orderStatusLine(order) {
@@ -61,31 +60,28 @@ async function handleSelectMenu(interaction) {
     const info = SettingsStore.getPaymentInfo(method);
 
     if (!info) {
-        return interaction.update({
-            embeds: [
-                new EmbedBuilder()
-                    .setTitle("⚠️ Método indisponível")
-                    .setColor(0xe67e22)
-                    .setDescription(`O método **${PAYMENT_METHODS[method]}** ainda não foi configurado pelo admin. Escolhe outro ou tenta mais tarde.`)
-            ],
-            components: [methodSelectRow()]
+        const container = panel({
+            title: "⚠️ Método indisponível",
+            color: 0xe67e22,
+            description: `O método **${PAYMENT_METHODS[method]}** ainda não foi configurado pelo admin. Escolhe outro ou tenta mais tarde.`
         });
+        return interaction.update(v2Payload(container, [methodSelectRow()]));
     }
 
     const order = OrderStore.create({ discordId: interaction.user.id, method });
 
-    const embed = new EmbedBuilder()
-        .setTitle(`💳 Pagamento via ${PAYMENT_METHODS[method]}`)
-        .setColor(0x8a3ffc)
-        .setDescription(info)
-        .addFields({ name: "Pedido", value: `\`${order.id}\`` })
-        .setFooter({ text: "Depois de pagar, clica no botão abaixo pra avisar o admin." });
+    const container = panel({
+        title: `💳 Pagamento via ${PAYMENT_METHODS[method]}`,
+        description: info,
+        fields: [{ name: "Pedido", value: `\`${order.id}\`` }],
+        footer: "Depois de pagar, clica no botão abaixo pra avisar o admin."
+    });
 
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`store:paid:${order.id}`).setLabel("✅ Já paguei").setStyle(ButtonStyle.Success)
     );
 
-    return interaction.update({ embeds: [embed], components: [row] });
+    return interaction.update(v2Payload(container, [row]));
 }
 
 async function handleButton(interaction) {
@@ -100,23 +96,17 @@ async function handleButton(interaction) {
             return interaction.reply({ content: "❌ Esse pedido não é seu.", ephemeral: true });
         }
         if (order.status !== "pending") {
-            return interaction.update({
-                embeds: [new EmbedBuilder().setTitle("Pedido").setColor(0x8a3ffc).setDescription(orderStatusLine(order))],
-                components: []
-            });
+            const container = panel({ title: "Pedido", description: orderStatusLine(order) });
+            return interaction.update(v2Payload(container, []));
         }
 
         OrderStore.markPaidClaimed(orderId);
 
-        await interaction.update({
-            embeds: [
-                new EmbedBuilder()
-                    .setTitle("📨 Avisamos o admin!")
-                    .setColor(0x8a3ffc)
-                    .setDescription(`Seu pedido \`${order.id}\` foi marcado como pago. Assim que um admin confirmar, você recebe a key aqui no privado — fica de olho nas mensagens diretas.`)
-            ],
-            components: []
+        const claimedContainer = panel({
+            title: "📨 Avisamos o admin!",
+            description: `Seu pedido \`${order.id}\` foi marcado como pago. Assim que um admin confirmar, você recebe a key aqui no privado — fica de olho nas mensagens diretas.`
         });
+        await interaction.update(v2Payload(claimedContainer, []));
 
         const channel = await getSalesChannel(interaction.client);
         if (!channel) {
@@ -124,19 +114,20 @@ async function handleButton(interaction) {
             return;
         }
 
-        const notifyEmbed = new EmbedBuilder()
-            .setTitle("🛒 Novo pedido pra confirmar")
-            .setColor(0xf1c40f)
-            .addFields(
-                { name: "Pedido", value: `\`${order.id}\``, inline: true },
-                { name: "Comprador", value: `<@${order.discordId}>`, inline: true },
-                { name: "Método", value: PAYMENT_METHODS[order.method], inline: true }
-            );
+        const notifyContainer = panel({
+            title: "🛒 Novo pedido pra confirmar",
+            color: 0xf1c40f,
+            fields: [
+                { name: "Pedido", value: `\`${order.id}\`` },
+                { name: "Comprador", value: `<@${order.discordId}>` },
+                { name: "Método", value: PAYMENT_METHODS[order.method] }
+            ]
+        });
         const notifyRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`store:confirm:${order.id}`).setLabel("✅ Confirmar pagamento").setStyle(ButtonStyle.Success),
             new ButtonBuilder().setCustomId(`store:reject:${order.id}`).setLabel("❌ Rejeitar").setStyle(ButtonStyle.Danger)
         );
-        await channel.send({ embeds: [notifyEmbed], components: [notifyRow] });
+        await channel.send(v2Payload(notifyContainer, [notifyRow]));
         return;
     }
 
@@ -147,7 +138,8 @@ async function handleButton(interaction) {
 
         const order = OrderStore.get(orderId);
         if (!order) {
-            return interaction.update({ content: "❌ Pedido não encontrado.", embeds: [], components: [] });
+            const container = panel({ title: "❌ Pedido não encontrado", description: "Esse pedido não existe mais." });
+            return interaction.update(v2Payload(container, []));
         }
 
         if (action === "confirm") {
@@ -163,35 +155,29 @@ async function handleButton(interaction) {
             let dmOk = true;
             try {
                 const buyer = await interaction.client.users.fetch(order.discordId);
-                await buyer.send({
-                    embeds: [
-                        new EmbedBuilder()
-                            .setTitle("🔑 Sua key chegou!")
-                            .setColor(0x2ecc71)
-                            .setDescription(
-                                `Pagamento confirmado — aqui está sua key:\n\n\`${keyEntry.key}\`\n\n` +
-                                `**Como usar:** dentro do jogo, digite \`/key redeem key:${keyEntry.key}\` aqui no Discord ` +
-                                `pra vincular ela na sua conta, depois cole a key na tela do hub quando ele carregar.`
-                            )
-                    ]
+                const dmContainer = panel({
+                    title: "🔑 Sua key chegou!",
+                    color: 0x2ecc71,
+                    description:
+                        `Pagamento confirmado — aqui está sua key:\n\n\`${keyEntry.key}\`\n\n` +
+                        `**Como usar:** dentro do jogo, digite \`/key redeem key:${keyEntry.key}\` aqui no Discord ` +
+                        `pra vincular ela na sua conta, depois cole a key na tela do hub quando ele carregar.`
                 });
+                await buyer.send(v2Payload(dmContainer, []));
             } catch {
                 dmOk = false;
             }
 
-            await interaction.update({
-                embeds: [
-                    new EmbedBuilder()
-                        .setTitle("✅ Pedido confirmado")
-                        .setColor(0x2ecc71)
-                        .addFields(
-                            { name: "Pedido", value: `\`${order.id}\``, inline: true },
-                            { name: "Key gerada", value: `\`${keyEntry.key}\``, inline: true },
-                            { name: "DM enviada?", value: dmOk ? "sim" : "❌ falhou (DMs fechadas?) — manda a key manualmente", inline: true }
-                        )
-                ],
-                components: []
+            const doneContainer = panel({
+                title: "✅ Pedido confirmado",
+                color: 0x2ecc71,
+                fields: [
+                    { name: "Pedido", value: `\`${order.id}\`` },
+                    { name: "Key gerada", value: `\`${keyEntry.key}\`` },
+                    { name: "DM enviada?", value: dmOk ? "sim" : "❌ falhou (DMs fechadas?) — manda a key manualmente" }
+                ]
             });
+            await interaction.update(v2Payload(doneContainer, []));
 
             logger.action(interaction.user.id, `confirmou o pedido ${order.id} e gerou a key ${keyEntry.key} pra <@${order.discordId}>`);
             return;
@@ -210,15 +196,12 @@ async function handleButton(interaction) {
                 // sem DM, sem problema — o admin já vê o resultado no painel
             }
 
-            await interaction.update({
-                embeds: [
-                    new EmbedBuilder()
-                        .setTitle("❌ Pedido rejeitado")
-                        .setColor(0xe74c3c)
-                        .addFields({ name: "Pedido", value: `\`${order.id}\`` }, { name: "Comprador", value: `<@${order.discordId}>` })
-                ],
-                components: []
+            const rejectedContainer = panel({
+                title: "❌ Pedido rejeitado",
+                color: 0xe74c3c,
+                fields: [{ name: "Pedido", value: `\`${order.id}\`` }, { name: "Comprador", value: `<@${order.discordId}>` }]
             });
+            await interaction.update(v2Payload(rejectedContainer, []));
 
             logger.action(interaction.user.id, `rejeitou o pedido ${order.id} (comprador: ${order.discordId})`);
             return;
