@@ -2,42 +2,62 @@
 
 ## [Não lançado]
 
-### Alterado — consolidação em painel admin
-- **Reduzido de ~4 comandos pra 3** (`/key`, `/admin`, `/help`). Tudo que
-  era admin (`/key generate|list|revoke|extend|purge`, `/resetcode
-  generate|list|revoke`, `/config show|expiry|hwidreset|resetcooldown|
-  trialdays|logchannel`, `/stats`) virou um único **painel interativo por
-  botões** (`/admin`), com modais pra pedir input em vez de opções de
-  slash command.
-- `/key` agora só tem os subcomandos de uso pessoal: `redeem`, `check`,
-  `resethwid`, `trial`.
-- Removidos os arquivos `commands/config.js`, `commands/resetcode.js` e
-  `commands/stats.js` — a lógica deles foi movida pra dentro de
-  `discord/adminPanel.js`.
-- `discord/client.js` agora roteia três tipos de interação: slash
-  commands, botões (`admin:*`) e envio de modal (`admin_modal:*`).
+### Adicionado — segurança, resiliência e UX do painel
+- **Segredo na API `/validate`**: `API_SECRET` no `.env`, checado via
+  header `X-API-Key` ou `?secret=`. Desativado por padrão (compatível
+  com quem já tinha o bot rodando), mas recomendado em produção.
+- **`config.js` aceita `process.env.PORT`**, com prioridade sobre
+  `API_PORT` — necessário pra hospedagens (Railway, etc.) que injetam a
+  porta automaticamente.
+- **Validação de ambiente ao iniciar** (`utils/validator.js`):
+  `DISCORD_TOKEN`/`CLIENT_ID` faltando encerra o processo com mensagem
+  clara; `GUILD_ID`/`ADMIN_ROLE_ID` faltando só avisa o trade-off.
+- **Backup automático de JSON corrompido** (`utils/jsonFile.js`): se
+  qualquer arquivo de dados vier corrompido, salva uma cópia
+  (`.bak-<timestamp>`) e reseta pro padrão, em vez de derrubar o bot.
+  As 4 stores (`keyStore`, `settingsStore`, `resetCodeStore`,
+  `trialStore`) foram refatoradas pra usar esse helper único — é a
+  camada de abstração que permite trocar por um banco de dados de
+  verdade no futuro sem tocar nas stores.
+- **Cooldown com precisão** (`utils/format.js` → `fmtDuration`): mostra
+  "1h 23min" / "45min" / "30s" em vez de arredondar tudo pra hora cheia.
+- **Confirmação antes de ações destrutivas**: revogar key e limpar
+  dados antigos (`purge`) agora mostram uma prévia do que será afetado
+  e exigem clique em "Confirmar" — `KeyStore.previewPurge()` calcula a
+  prévia sem apagar nada.
+- **Paginação na listagem de keys**: painel `/admin` → Listar Keys
+  agora mostra 10 por página com botões Anterior/Próximo, em vez de
+  cortar silenciosamente em 25.
+
+### Alterado
+- `main.lua` do hub atualizado: envia `&secret=` na validação (se
+  `API_SECRET` configurado) e trata o motivo `unauthorized`.
+
+## v2.0.0 — Painel Admin + Monetização
+
+### ⚠️ Breaking changes
+- `/config`, `/resetcode` e `/stats` foram removidos como comandos
+  separados — toda a administração agora vive dentro de **`/admin`**,
+  um painel interativo por botões e formulários.
+- `/key` ficou restrito ao uso pessoal: `redeem`, `check`, `resethwid`,
+  `trial`. As ações de admin (`generate`, `list`, `revoke`, `extend`,
+  `purge`) migraram pro painel.
 
 ### Adicionado
-- `discord/adminPanel.js` — painel principal, painel de configurações,
-  geração de modais e os handlers de botão/modal.
-- `commands/admin.js` — abre o painel (`/admin`).
-- Geração de key em lote (campo "quantidade" no modal de gerar, até 25
-  por vez).
-- `/key extend` (via painel) — renova a validade de uma key existente.
-- `/key trial` — key de teste grátis autoatendida, 1 por conta do
-  Discord (`store/trialStore.js` controla isso).
-- `/key purge` (via painel) — remove do JSON keys revogadas/expiradas
-  antigas.
-- Estatísticas (via painel) — total de keys, ativas, expiradas,
-  revogadas, resgatadas, trials distribuídos, códigos de reset
-  gerados/vendidos.
-- **Monetização de reset de HWID**: cooldown configurável
-  (`resetCooldownHours`, padrão 24h) entre resets gratuitos, e códigos de
-  reset vendáveis (`store/resetCodeStore.js`) que pulam o cooldown quando
-  usados em `/key resethwid codigo:`.
+- Painel administrativo completo (`/admin`): gerar keys (individual ou
+  em lote, até 25), listar, revogar, renovar, gerar/listar/revogar
+  códigos de reset, ajustar configurações e ver estatísticas — tudo por
+  botões e modais.
+- `/key trial` — key de teste gratuita autoatendida, 1 por conta do
+  Discord.
+- **Monetização de reset de HWID**: cooldown configurável entre resets
+  gratuitos, e códigos de reset vendáveis que pulam esse cooldown.
+- Renovação de key (`extend`) e limpeza de dados antigos (`purge`).
+- README reescrito, mais completo e profissional.
 
-### Anterior (primeira versão)
+## v1.0.0 — Primeira versão
 - Bot com `/key` e `/config` separados, API de validação em `/validate`,
   armazenamento em JSON simples (`keyStore.js`, `settingsStore.js`),
   carregamento automático de comandos, workflow de CI (checagem de
   sintaxe + guarda contra `.env`/`data/keys.json` commitado).
+

@@ -124,6 +124,57 @@ function backRow() {
     );
 }
 
+const KEYS_PER_PAGE = 10;
+
+/** Painel paginado de listagem de keys. page é 0-indexed. */
+function keyListPanel(page = 0) {
+    const all = KeyStore.list();
+    const totalPages = Math.max(1, Math.ceil(all.length / KEYS_PER_PAGE));
+    const safePage = Math.min(Math.max(page, 0), totalPages - 1);
+    const slice = all.slice(safePage * KEYS_PER_PAGE, safePage * KEYS_PER_PAGE + KEYS_PER_PAGE);
+
+    const embed = new EmbedBuilder()
+        .setTitle(`🔑 Keys cadastradas (${all.length})`)
+        .setColor(0x8a3ffc)
+        .setFooter({ text: `Página ${safePage + 1} de ${totalPages}` });
+
+    embed.setDescription(
+        slice.length === 0
+            ? "Nenhuma key cadastrada ainda."
+            : slice.map(e => `\`${e.key}\` — ${statusOf(e)} — ${e.discordId ? `<@${e.discordId}>` : "não resgatada"}`).join("\n")
+    );
+
+    const nav = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`admin:list_page:${safePage - 1}`)
+            .setLabel("⬅️ Anterior")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(safePage <= 0),
+        new ButtonBuilder()
+            .setCustomId(`admin:list_page:${safePage + 1}`)
+            .setLabel("Próximo ➡️")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(safePage >= totalPages - 1)
+    );
+
+    return { embeds: [embed], components: [nav, backRow()] };
+}
+
+/** Painel de confirmação genérico, usado antes de qualquer ação destrutiva. */
+function confirmPanel({ title, description, confirmCustomId, confirmLabel = "Confirmar", danger = true }) {
+    const embed = new EmbedBuilder()
+        .setTitle(title)
+        .setColor(danger ? 0xe74c3c : 0x8a3ffc)
+        .setDescription(description);
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(confirmCustomId).setLabel(confirmLabel).setStyle(danger ? ButtonStyle.Danger : ButtonStyle.Primary).setEmoji("✅"),
+        new ButtonBuilder().setCustomId("admin:back").setLabel("Cancelar").setStyle(ButtonStyle.Secondary).setEmoji("✖️")
+    );
+
+    return { embeds: [embed], components: [row] };
+}
+
 // ============================================================
 // MODAIS (formulários pra pedir input)
 // ============================================================
@@ -190,7 +241,7 @@ async function handleButton(interaction) {
         return interaction.reply({ content: "❌ Só admins podem usar esse painel.", ephemeral: true });
     }
 
-    const action = interaction.customId.split(":")[1];
+    const [, action, param] = interaction.customId.split(":");
 
     // Ações que abrem um modal
     if (MODALS[action]) {
@@ -213,17 +264,9 @@ async function handleButton(interaction) {
         return interaction.update(configPanel());
     }
 
-    if (action === "list") {
-        const all = KeyStore.list();
-        const embed = new EmbedBuilder().setTitle(`🔑 Keys cadastradas (${all.length})`).setColor(0x8a3ffc);
-        if (all.length === 0) {
-            embed.setDescription("Nenhuma key cadastrada ainda.");
-        } else {
-            const lines = all.slice(0, 25).map(e => `\`${e.key}\` — ${statusOf(e)} — ${e.discordId ? `<@${e.discordId}>` : "não resgatada"}`);
-            embed.setDescription(lines.join("\n"));
-            if (all.length > 25) embed.setFooter({ text: "Mostrando as 25 primeiras" });
-        }
-        return interaction.update({ embeds: [embed], components: [backRow()] });
+    if (action === "list" || action === "list_page") {
+        const page = action === "list_page" ? Number(param) || 0 : 0;
+        return interaction.update(keyListPanel(page));
     }
 
     if (action === "resetcode_list") {
@@ -269,14 +312,41 @@ async function handleButton(interaction) {
         return interaction.update({ embeds: [embed], components: [backRow()] });
     }
 
+    // "purge" (botão rápido, 30 dias) só mostra a PRÉVIA — quem apaga de
+    // verdade é o "confirm_purge", depois da confirmação.
     if (action === "purge") {
-        const removidas = KeyStore.purge(30);
-        await logAction(interaction, `limpou ${removidas.length} key(s) antiga(s) (30 dias)${removidas.length ? `: ${removidas.join(", ")}` : ""}`);
+        const preview = KeyStore.previewPurge(30);
+        return interaction.update(confirmPanel({
+            title: "🧹 Confirmar limpeza",
+            description: preview.length === 0
+                ? "Nenhuma key revogada/expirada há mais de 30 dias — nada a remover."
+                : `Isso vai remover **${preview.length}** key(s):\n${preview.slice(0, 20).join(", ")}${preview.length > 20 ? "…" : ""}`,
+            confirmCustomId: "admin:confirm_purge:30",
+            confirmLabel: "Confirmar limpeza"
+        }));
+    }
+
+    if (action === "confirm_purge") {
+        const dias = Number(param) || 30;
+        const removidas = KeyStore.purge(dias);
+        await logAction(interaction, `limpou ${removidas.length} key(s) antiga(s) (+${dias} dias)${removidas.length ? `: ${removidas.join(", ")}` : ""}`);
         const embed = new EmbedBuilder()
             .setTitle("🧹 Limpeza concluída")
             .setColor(0x8a3ffc)
-            .setDescription(`${removidas.length} key(s) revogada(s)/expirada(s) há mais de 30 dias foram removidas.`);
+            .setDescription(`${removidas.length} key(s) revogada(s)/expirada(s) há mais de ${dias} dias foram removidas.`);
         return interaction.update({ embeds: [embed], components: [backRow()] });
+    }
+
+    if (action === "confirm_revoke") {
+        const key = param;
+        const ok = KeyStore.revoke(key);
+        await interaction.update({
+            content: ok ? `🔴 Key \`${key}\` revogada.` : `❌ Key \`${key}\` não encontrada.`,
+            embeds: [],
+            components: [backRow()]
+        });
+        if (ok) await logAction(interaction, `revogou a key \`${key}\``);
+        return;
     }
 }
 
@@ -309,14 +379,16 @@ async function handleModalSubmit(interaction) {
 
     if (action === "revoke") {
         const key = get("key");
-        const ok = KeyStore.revoke(key);
-        await respondToPanel(interaction, {
-            content: ok ? `🔴 Key \`${key}\` revogada.` : `❌ Key \`${key}\` não encontrada.`,
-            embeds: [],
-            components: [backRow()]
-        });
-        if (ok) await logAction(interaction, `revogou a key \`${key}\``);
-        return;
+        const entry = KeyStore.get(key);
+        if (!entry) {
+            return respondToPanel(interaction, { content: `❌ Key \`${key}\` não encontrada.`, embeds: [], components: [backRow()] });
+        }
+        return respondToPanel(interaction, confirmPanel({
+            title: "🗑️ Confirmar revogação",
+            description: `Tem certeza que quer revogar a key \`${key}\`?${entry.discordId ? ` Ela está vinculada a <@${entry.discordId}>.` : ""}`,
+            confirmCustomId: `admin:confirm_revoke:${key}`,
+            confirmLabel: "Revogar"
+        }));
     }
 
     if (action === "extend") {
@@ -336,13 +408,15 @@ async function handleModalSubmit(interaction) {
 
     if (action === "purge") {
         const dias = Number(get("dias")) || 30;
-        const removidas = KeyStore.purge(dias);
-        await respondToPanel(interaction, {
-            content: `🧹 ${removidas.length} key(s) removida(s) (revogadas/expiradas há +${dias} dias).`,
-            embeds: [],
-            components: [backRow()]
-        });
-        return logAction(interaction, `limpou ${removidas.length} key(s) antiga(s) (+${dias} dias)${removidas.length ? `: ${removidas.join(", ")}` : ""}`);
+        const preview = KeyStore.previewPurge(dias);
+        return respondToPanel(interaction, confirmPanel({
+            title: "🧹 Confirmar limpeza",
+            description: preview.length === 0
+                ? `Nenhuma key revogada/expirada há mais de ${dias} dias — nada a remover.`
+                : `Isso vai remover **${preview.length}** key(s):\n${preview.slice(0, 20).join(", ")}${preview.length > 20 ? "…" : ""}`,
+            confirmCustomId: `admin:confirm_purge:${dias}`,
+            confirmLabel: "Confirmar limpeza"
+        }));
     }
 
     if (action === "resetcode_generate") {

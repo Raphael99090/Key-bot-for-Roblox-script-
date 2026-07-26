@@ -1,6 +1,6 @@
-const fs = require("fs");
 const crypto = require("crypto");
 const { paths } = require("../config");
+const { createJsonFile } = require("../utils/jsonFile");
 
 /**
  * Formato de cada key salva:
@@ -16,30 +16,22 @@ const { paths } = require("../config");
  * }
  */
 
-function ensureFile() {
-    if (!fs.existsSync(paths.keys)) {
-        fs.mkdirSync(require("path").dirname(paths.keys), { recursive: true });
-        fs.writeFileSync(paths.keys, JSON.stringify({}, null, 2));
-    }
-}
-
-function readAll() {
-    ensureFile();
-    const raw = fs.readFileSync(paths.keys, "utf-8");
-    try {
-        return JSON.parse(raw);
-    } catch {
-        return {};
-    }
-}
-
-function writeAll(data) {
-    fs.writeFileSync(paths.keys, JSON.stringify(data, null, 2));
-}
+const { readAll, writeAll } = createJsonFile(paths.keys, {});
 
 function generateKeyString() {
     const part = () => crypto.randomBytes(2).toString("hex").toUpperCase();
     return `1NX-${part()}-${part()}-${part()}`;
+}
+
+function selectPurgeCandidates(all, olderThanDays) {
+    const cutoff = Date.now() - olderThanDays * 86400000;
+    const candidates = [];
+    for (const [k, entry] of Object.entries(all)) {
+        const isExpired = entry.expiresAt && entry.expiresAt < cutoff;
+        const isOldRevoked = entry.revoked && entry.createdAt < cutoff;
+        if (isExpired || isOldRevoked) candidates.push(k);
+    }
+    return candidates;
 }
 
 const KeyStore = {
@@ -120,19 +112,20 @@ const KeyStore = {
      */
     purge(olderThanDays = 30) {
         const all = readAll();
-        const cutoff = Date.now() - olderThanDays * 86400000;
-        const removedKeys = [];
+        const toRemove = selectPurgeCandidates(all, olderThanDays);
 
-        for (const [k, entry] of Object.entries(all)) {
-            const isExpired = entry.expiresAt && entry.expiresAt < cutoff;
-            const isOldRevoked = entry.revoked && entry.createdAt < cutoff;
-            if (isExpired || isOldRevoked) {
-                delete all[k];
-                removedKeys.push(k);
-            }
-        }
+        for (const k of toRemove) delete all[k];
         writeAll(all);
-        return removedKeys;
+        return toRemove;
+    },
+
+    /**
+     * Mesma seleção do purge(), mas sem apagar nada — só pra mostrar
+     * numa tela de confirmação antes do usuário decidir de verdade.
+     */
+    previewPurge(olderThanDays = 30) {
+        const all = readAll();
+        return selectPurgeCandidates(all, olderThanDays);
     },
 
     /** Quanto tempo falta (em ms) até poder resetar de novo. 0 = pode resetar já. */

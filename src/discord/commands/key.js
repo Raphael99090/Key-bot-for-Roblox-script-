@@ -3,6 +3,7 @@ const KeyStore = require("../../store/keyStore");
 const SettingsStore = require("../../store/settingsStore");
 const ResetCodeStore = require("../../store/resetCodeStore");
 const TrialStore = require("../../store/trialStore");
+const { fmtDuration } = require("../../utils/format");
 
 function fmtDate(ts) {
     return ts ? new Date(ts).toLocaleString("pt-BR") : "nunca";
@@ -127,9 +128,8 @@ module.exports = {
                 const cooldownHours = SettingsStore.get("resetCooldownHours");
                 const remaining = KeyStore.cooldownRemaining(key, cooldownHours);
                 if (remaining > 0) {
-                    const horas = Math.ceil(remaining / 3600000);
                     return interaction.reply({
-                        content: `⏳ Essa key só pode resetar o HWID de novo em ~${horas}h. Se precisar agora, use um código de reset com \`/key resethwid codigo:\`.`,
+                        content: `⏳ Essa key só pode resetar o HWID de novo em ${fmtDuration(remaining)}. Se precisar agora, use um código de reset com \`/key resethwid codigo:\`.`,
                         ephemeral: true
                     });
                 }

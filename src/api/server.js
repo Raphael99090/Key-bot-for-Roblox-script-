@@ -1,6 +1,6 @@
 const express = require("express");
 const validateRoute = require("./routes/validate");
-const { apiPort } = require("../config");
+const { apiPort, apiSecret } = require("../config");
 const logger = require("../utils/logger");
 
 function startApi() {
@@ -26,6 +26,19 @@ function startApi() {
 
         if (record.count > max) {
             return res.status(429).json({ valid: false, reason: "rate_limited" });
+        }
+        next();
+    });
+
+    // Segredo da API: se API_SECRET estiver definido no .env, exige ele
+    // via header X-API-Key ou ?secret=. Sem isso, qualquer um na internet
+    // podia bater na rota — agora só quem tem o segredo (ex: o próprio
+    // script Lua do hub) consegue.
+    app.use((req, res, next) => {
+        if (!apiSecret) return next(); // sem segredo configurado = desativado
+        const provided = req.header("x-api-key") || req.query.secret;
+        if (provided !== apiSecret) {
+            return res.status(401).json({ valid: false, reason: "unauthorized" });
         }
         next();
     });

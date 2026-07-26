@@ -1,9 +1,6 @@
-const fs = require("fs");
-const path = require("path");
 const crypto = require("crypto");
 const { paths } = require("../config");
-
-const filePath = path.join(path.dirname(paths.keys), "resetcodes.json");
+const { createJsonFile } = require("../utils/jsonFile");
 
 /**
  * Formato de cada código:
@@ -18,25 +15,7 @@ const filePath = path.join(path.dirname(paths.keys), "resetcodes.json");
  * }
  */
 
-function ensureFile() {
-    if (!fs.existsSync(filePath)) {
-        fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        fs.writeFileSync(filePath, JSON.stringify({}, null, 2));
-    }
-}
-
-function readAll() {
-    ensureFile();
-    try {
-        return JSON.parse(fs.readFileSync(filePath, "utf-8"));
-    } catch {
-        return {};
-    }
-}
-
-function writeAll(data) {
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
-}
+const { readAll, writeAll } = createJsonFile(paths.resetCodes, {});
 
 function generateCode() {
     return `RESET-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;

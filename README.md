@@ -39,7 +39,16 @@ sintaxe de comando para cada ação.
   o produto que você vende para quem precisa resetar com urgência.
 - 📊 **Estatísticas**: visão consolidada de keys ativas, expiradas,
   revogadas, resgatadas, trials distribuídos e códigos vendidos.
-- 🧹 **Manutenção**: remoção de keys antigas revogadas/expiradas.
+- 🧹 **Manutenção**: remoção de keys antigas revogadas/expiradas, com
+  prévia e confirmação antes de executar.
+- 🛡️ **Confirmação em ações destrutivas**: revogar key e limpar dados
+  antigos mostram uma prévia do que será afetado antes de executar.
+- 📄 **Listagem paginada**: navegação por página no painel, em vez de
+  cortar silenciosamente em 25 resultados.
+- 🔐 **API protegida por segredo** (opcional, mas recomendado) e com
+  rate limiting básico.
+- 💾 **Dados resistentes a corrupção**: JSON corrompido gera backup
+  automático em vez de derrubar o bot.
 - 🌐 **API de validação HTTP**, consumida diretamente pelo `main.lua`
   do hub.
 
@@ -63,11 +72,14 @@ src/
 │       ├── admin.js                 # /admin — abre o painel
 │       └── help.js                   # /help
 ├── api/
-│   ├── server.js                  # servidor Express + rate limit
-│   └── routes/validate.js          # GET /validate?key=&hwid=
+│   ├── server.js                  # servidor Express + rate limit + segredo
+│   └── routes/validate.js          # GET /validate?key=&hwid=&secret=
 └── utils/
-    ├── logger.js
-    └── permissions.js
+    ├── logger.js                    # console + arquivo (data/bot.log)
+    ├── permissions.js                 # quem é admin
+    ├── validator.js                    # valida .env ao iniciar
+    ├── format.js                         # formatação de duração (cooldown)
+    └── jsonFile.js                         # leitura/escrita JSON com backup automático
 data/                            # gerado em runtime, não versionado
 ```
 
@@ -104,7 +116,7 @@ cargo definido em `ADMIN_ROLE_ID` no `.env`.
 ### Passo a passo
 
 ```bash
-git clone <https://github.com/Raphael99090/Key-bot-for-Roblox-script->
+git clone <url-do-seu-repo>
 cd keybot
 npm install
 cp .env.example .env
@@ -118,7 +130,13 @@ Preencha o `.env`:
 | `CLIENT_ID` | Application ID (Developer Portal → General Information) |
 | `GUILD_ID` | ID do servidor onde os comandos serão registrados (recomendado — sem isso, o registro global demora até 1h para propagar) |
 | `ADMIN_ROLE_ID` | ID do cargo com acesso ao painel admin (opcional) |
-| `API_PORT` | Porta da API HTTP (padrão `3000`) |
+| `API_PORT` | Porta da API HTTP local (padrão `3000`). Em hospedagens que injetam a porta via `PORT` (Railway, etc.), essa variável tem prioridade. |
+| `API_SECRET` | Segredo exigido pra chamar `/validate` (recomendado em produção — sem ele, a API fica aberta pra qualquer um) |
+
+O bot valida essas variáveis ao iniciar: se `DISCORD_TOKEN` ou `CLIENT_ID`
+estiverem faltando, ele encerra com uma mensagem clara. `GUILD_ID` e
+`ADMIN_ROLE_ID` são recomendados, mas o bot sobe sem eles (só avisa o
+trade-off no console).
 
 Registre os comandos e inicie:
 
@@ -144,11 +162,15 @@ Vercel Functions). Opções gratuitas recomendadas:
 
 ```lua
 local API_URL = "https://seu-bot.exemplo.com/validate"
+local API_SECRET = "" -- mesmo valor do API_SECRET no .env do bot, se tiver
 
 local function ValidateKey(key)
     local hwid = game:GetService("RbxAnalyticsService"):GetClientId()
+    local url = API_URL .. "?key=" .. key .. "&hwid=" .. hwid
+    if API_SECRET ~= "" then url = url .. "&secret=" .. API_SECRET end
+
     local ok, response = pcall(function()
-        return game:HttpGet(API_URL .. "?key=" .. key .. "&hwid=" .. hwid)
+        return game:HttpGet(url)
     end)
     if not ok then return false, "request_failed" end
 
@@ -162,16 +184,25 @@ vinculado) — apenas `{ valid: boolean, reason: string|null }`.
 
 ## Segurança e limitações conhecidas
 
-- A rota `/validate` não exige autenticação, apenas rate limiting básico
-  (20 requisições / 10s por IP). Suficiente para o caso de uso, mas não
-  é um sistema de nível bancário.
+- A rota `/validate` aceita rate limiting básico (20 requisições / 10s
+  por IP) sempre, e exige `API_SECRET` (header `X-API-Key` ou `?secret=`)
+  quando essa variável está definida no `.env`. Sem `API_SECRET`
+  configurado, a rota fica aberta — recomendado configurar em produção.
 - HWID é o identificador que o executor/jogo fornece — funciona como
   dificultador de compartilhamento de key, não como trava criptográfica
   inquebrável.
-- Os dados residem em arquivos JSON locais (`data/`). Em plataformas cujo
-  free tier reseta o filesystem a cada deploy, isso causa perda de dados
-  entre implantações — nesse caso, migrar para um banco externo (ex.:
-  Postgres free tier) é recomendado.
+- **Persistência de dados**: tudo fica em arquivos JSON locais (`data/`),
+  acessados através de um helper único (`utils/jsonFile.js`) que faz
+  backup automático (`.bak-<timestamp>`) se detectar um arquivo
+  corrompido, em vez de derrubar o bot. As stores (`keyStore`,
+  `settingsStore`, etc.) só conhecem `readAll()`/`writeAll()` — trocar
+  o back-end de armazenamento por um banco de dados de verdade no
+  futuro significa reimplementar só esse helper, sem tocar nas stores
+  nem nos comandos.
+- Em plataformas cujo free tier reseta o filesystem a cada deploy
+  (alguns free tiers fazem isso), os arquivos em `data/` se perdem entre
+  implantações — nesse caso, um volume persistente (a maioria das
+  hospedagens oferece) ou migrar pra um banco externo é necessário.
 
 ## Licença
 
