@@ -4,6 +4,7 @@ const { Client, GatewayIntentBits, Collection } = require("discord.js");
 const config = require("../config");
 const logger = require("../utils/logger");
 const adminPanel = require("./adminPanel");
+const storePanel = require("./storePanel");
 
 function createClient() {
     const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -39,6 +40,14 @@ function createClient() {
             }
             if (interaction.isModalSubmit() && interaction.customId.startsWith("admin_modal:")) {
                 return await adminPanel.handleModalSubmit(interaction);
+            }
+
+            // Fluxo de compra (/comprar) usa customId "store:..."
+            if (interaction.isStringSelectMenu() && interaction.customId.startsWith("store:")) {
+                return await storePanel.handleSelectMenu(interaction);
+            }
+            if (interaction.isButton() && interaction.customId.startsWith("store:")) {
+                return await storePanel.handleButton(interaction);
             }
         } catch (err) {
             logger.error(`Erro ao processar interação -> ${err.stack || err}`);

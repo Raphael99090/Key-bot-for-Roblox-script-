@@ -86,7 +86,11 @@ function mainPanel() {
         new ButtonBuilder().setCustomId("admin:config").setLabel("Configurações").setEmoji("⚙️").setStyle(ButtonStyle.Secondary)
     );
 
-    return { embeds: [embed], components: [row1, row2, row3] };
+    const row4 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("admin:payments").setLabel("Vendas / Pagamentos").setEmoji("💳").setStyle(ButtonStyle.Secondary)
+    );
+
+    return { embeds: [embed], components: [row1, row2, row3, row4] };
 }
 
 function configPanel() {
@@ -110,6 +114,38 @@ function configPanel() {
     const row2 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:config_toggle_hwidreset").setLabel("Alternar: HWID só admin").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("admin:config_logchannel").setLabel("Canal de log").setStyle(ButtonStyle.Secondary)
+    );
+    const row3 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("admin:back").setLabel("⬅️ Voltar").setStyle(ButtonStyle.Secondary)
+    );
+
+    return { embeds: [embed], components: [row1, row2, row3] };
+}
+
+function paymentsPanel() {
+    const s = SettingsStore.getAll();
+    const preview = (text) => (text ? (text.length > 60 ? `${text.slice(0, 60)}…` : text) : "não configurado");
+
+    const embed = new EmbedBuilder()
+        .setTitle("💳 Vendas / Pagamentos")
+        .setColor(0x8a3ffc)
+        .setDescription("Configure as instruções que o cliente vê em `/comprar`, e o canal onde os pedidos aparecem pra você confirmar.")
+        .addFields(
+            { name: "Pix", value: preview(s.paymentInfo?.pix) },
+            { name: "Bitcoin", value: preview(s.paymentInfo?.btc) },
+            { name: "Cartão", value: preview(s.paymentInfo?.card) },
+            { name: "Moeda local", value: preview(s.paymentInfo?.local) },
+            { name: "Canal de pedidos", value: s.salesChannelId ? `<#${s.salesChannelId}>` : (s.logChannelId ? `<#${s.logChannelId}> (canal de log)` : "não configurado") }
+        );
+
+    const row1 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("admin:payment_pix").setLabel("Editar Pix").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("admin:payment_btc").setLabel("Editar Bitcoin").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("admin:payment_card").setLabel("Editar Cartão").setStyle(ButtonStyle.Secondary)
+    );
+    const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("admin:payment_local").setLabel("Editar Moeda Local").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("admin:payment_saleschannel").setLabel("Canal de pedidos").setStyle(ButtonStyle.Secondary)
     );
     const row3 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:back").setLabel("⬅️ Voltar").setStyle(ButtonStyle.Secondary)
@@ -229,6 +265,21 @@ const MODALS = {
     ]),
     config_logchannel: () => modal("admin_modal:config_logchannel", "Canal de log", [
         { id: "canal", label: "ID do canal (vazio = desativar)", required: false, placeholder: "ex: 123456789012345678" }
+    ]),
+    payment_pix: () => modal("admin_modal:payment_pix", "Instruções — Pix", [
+        { id: "texto", label: "Chave/valor/instruções", long: true, required: false }
+    ]),
+    payment_btc: () => modal("admin_modal:payment_btc", "Instruções — Bitcoin", [
+        { id: "texto", label: "Endereço/valor/instruções", long: true, required: false }
+    ]),
+    payment_card: () => modal("admin_modal:payment_card", "Instruções — Cartão", [
+        { id: "texto", label: "Link de pagamento/instruções", long: true, required: false }
+    ]),
+    payment_local: () => modal("admin_modal:payment_local", "Instruções — Moeda local", [
+        { id: "texto", label: "Instruções de pagamento", long: true, required: false }
+    ]),
+    payment_saleschannel: () => modal("admin_modal:payment_saleschannel", "Canal de pedidos", [
+        { id: "canal", label: "ID do canal (vazio = usa o canal de log)", required: false, placeholder: "ex: 123456789012345678" }
     ])
 };
 
@@ -255,6 +306,10 @@ async function handleButton(interaction) {
 
     if (action === "config") {
         return interaction.update(configPanel());
+    }
+
+    if (action === "payments") {
+        return interaction.update(paymentsPanel());
     }
 
     if (action === "config_toggle_hwidreset") {
@@ -472,6 +527,22 @@ async function handleModalSubmit(interaction) {
         SettingsStore.set("logChannelId", id || null);
         await respondToPanel(interaction, configPanel());
         return logAction(interaction, `definiu o canal de log: ${id ? `<#${id}>` : "desativado"}`);
+    }
+
+    if (["payment_pix", "payment_btc", "payment_card", "payment_local"].includes(action)) {
+        const method = action.replace("payment_", "");
+        const texto = get("texto") || "";
+        SettingsStore.setPaymentInfo(method, texto);
+        await respondToPanel(interaction, paymentsPanel());
+        return logAction(interaction, `atualizou as instruções de pagamento (${method})`);
+    }
+
+    if (action === "payment_saleschannel") {
+        const raw = get("canal");
+        const id = raw ? raw.replace(/[<#>]/g, "") : null;
+        SettingsStore.set("salesChannelId", id || null);
+        await respondToPanel(interaction, paymentsPanel());
+        return logAction(interaction, `definiu o canal de pedidos: ${id ? `<#${id}>` : "desativado (usa o de log)"}`);
     }
 }
 

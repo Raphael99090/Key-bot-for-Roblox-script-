@@ -20,6 +20,7 @@ module.exports = {
         keys: path.join(__dirname, "..", "data", "keys.json"),
         settings: path.join(__dirname, "..", "data", "config.json"),
         resetCodes: path.join(__dirname, "..", "data", "resetcodes.json"),
-        trials: path.join(__dirname, "..", "data", "trials.json")
+        trials: path.join(__dirname, "..", "data", "trials.json"),
+        orders: path.join(__dirname, "..", "data", "orders.json")
     }
 };
