@@ -43,9 +43,6 @@ function createClient() {
             }
 
             // Fluxo de compra (/comprar) usa customId "store:..."
-            if (interaction.isStringSelectMenu() && interaction.customId.startsWith("store:")) {
-                return await storePanel.handleSelectMenu(interaction);
-            }
             if (interaction.isButton() && interaction.customId.startsWith("store:")) {
                 return await storePanel.handleButton(interaction);
             }

@@ -3,12 +3,13 @@ const { paths } = require("../config");
 const { createJsonFile } = require("../utils/jsonFile");
 
 /**
- * Formato de cada pedido:
+ * Formato de cada pedido/ticket:
  * {
  *   id: "ORD-AB12CD34",
- *   discordId: "123...",       // quem comprou
- *   method: "pix"|"btc"|"card"|"local",
- *   status: "pending"|"paid_claimed"|"confirmed"|"rejected",
+ *   discordId: "123...",         // quem comprou
+ *   plan: "day"|"week"|"month"|"lifetime",
+ *   channelId: "123...",          // canal privado (ticket) criado pra essa compra
+ *   status: "open"|"confirmed"|"rejected",
  *   createdAt: 1710000000000,
  *   decidedAt: 1710000000000 | null,
  *   decidedBy: "discordId" | null,   // admin que confirmou/rejeitou
@@ -23,7 +24,7 @@ function generateId() {
 }
 
 const OrderStore = {
-    create({ discordId, method }) {
+    create({ discordId, plan, channelId }) {
         const all = readAll();
         let id;
         do {
@@ -33,8 +34,9 @@ const OrderStore = {
         all[id] = {
             id,
             discordId,
-            method,
-            status: "pending",
+            plan,
+            channelId,
+            status: "open",
             createdAt: Date.now(),
             decidedAt: null,
             decidedBy: null,
@@ -49,30 +51,24 @@ const OrderStore = {
         return all[id] || null;
     },
 
+    getByChannel(channelId) {
+        return this.list().find(o => o.channelId === channelId) || null;
+    },
+
     list() {
         return Object.values(readAll());
     },
 
-    listPending() {
-        return this.list().filter(o => o.status === "pending" || o.status === "paid_claimed");
-    },
-
-    /** Comprador avisa que já pagou — só muda o status pra evidenciar isso pro admin. */
-    markPaidClaimed(id) {
-        const all = readAll();
-        if (!all[id]) return false;
-        all[id].status = "paid_claimed";
-        writeAll(all);
-        return true;
+    listOpen() {
+        return this.list().filter(o => o.status === "open");
     },
 
     confirm(id, generatedKey, adminId) {
         const all = readAll();
         const entry = all[id];
         if (!entry) return { ok: false, reason: "not_found" };
-        if (entry.status === "confirmed" || entry.status === "rejected") {
-            return { ok: false, reason: "already_decided" };
-        }
+        if (entry.status !== "open") return { ok: false, reason: "already_decided" };
+
         entry.status = "confirmed";
         entry.generatedKey = generatedKey;
         entry.decidedAt = Date.now();
@@ -85,9 +81,8 @@ const OrderStore = {
         const all = readAll();
         const entry = all[id];
         if (!entry) return { ok: false, reason: "not_found" };
-        if (entry.status === "confirmed" || entry.status === "rejected") {
-            return { ok: false, reason: "already_decided" };
-        }
+        if (entry.status !== "open") return { ok: false, reason: "already_decided" };
+
         entry.status = "rejected";
         entry.decidedAt = Date.now();
         entry.decidedBy = adminId;

@@ -2,134 +2,139 @@ const {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
-    StringSelectMenuBuilder
+    ChannelType,
+    PermissionFlagsBits
 } = require("discord.js");
 const KeyStore = require("../store/keyStore");
 const SettingsStore = require("../store/settingsStore");
 const OrderStore = require("../store/orderStore");
 const { isAdmin } = require("../utils/permissions");
+const { fmtDate } = require("../utils/format");
 const logger = require("../utils/logger");
 const { panel, v2Payload } = require("./v2");
-const { fmtDate } = require("../utils/format");
 const { sendActionLog } = require("./logNotifier");
+const config = require("../config");
 
-const { PAYMENT_METHODS } = SettingsStore;
+const { PLAN_LABELS, PLAN_DAYS, PAYMENT_METHODS } = SettingsStore;
 
-async function getSalesChannel(client) {
-    const channelId = SettingsStore.get("salesChannelId") || SettingsStore.get("logChannelId");
-    if (!channelId) return null;
-    try {
-        const channel = await client.channels.fetch(channelId);
-        return channel?.isTextBased() ? channel : null;
-    } catch (err) {
-        logger.warn(`Falha ao buscar o canal de vendas -> ${err.message}`);
-        return null;
-    }
+function priceLine(plan) {
+    const price = SettingsStore.getPlanPrice(plan);
+    return price || "preço a definir";
 }
 
-function methodSelectRow() {
-    const options = Object.entries(PAYMENT_METHODS).map(([value, label]) => ({ label, value }));
+function planButtonsRow() {
     return new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-            .setCustomId("store:select_method")
-            .setPlaceholder("Escolha a forma de pagamento")
-            .addOptions(options)
+        Object.keys(PLAN_LABELS).map(plan =>
+            new ButtonBuilder()
+                .setCustomId(`store:buy:${plan}`)
+                .setLabel(`${PLAN_LABELS[plan]} — ${priceLine(plan)}`)
+                .setStyle(plan === "lifetime" ? ButtonStyle.Success : ButtonStyle.Primary)
+        )
     );
 }
 
-function initialPanel() {
+/** Painel público/pessoal da loja — os 4 planos com preço já no botão. */
+function shopPanel() {
+    const description = SettingsStore.get("shopDescription") || "Escolha um plano abaixo pra comprar sua key.";
     const container = panel({
-        title: "🛒 Comprar key — 1NXITER HUB",
-        description: "Escolha como você quer pagar. Depois de pagar, você confirma pra gente aqui mesmo, e a key é enviada no seu privado assim que o pagamento for aprovado."
+        title: "🛒 Loja — 1NXITER HUB",
+        description: `${description}\n\n**🛒 Compre aqui:**`,
+        footer: "Ao escolher um plano, um canal privado é criado só pra você e a administração."
     });
-    return v2Payload(container, [methodSelectRow()]);
+    return v2Payload(container, [planButtonsRow()]);
 }
 
-function orderStatusLine(order) {
-    const map = {
-        pending: "⏳ Aguardando pagamento",
-        paid_claimed: "📨 Pagamento avisado — aguardando confirmação do admin",
-        confirmed: "✅ Confirmado",
-        rejected: "❌ Rejeitado"
-    };
-    return map[order.status] || order.status;
+function paymentReferenceText() {
+    const lines = Object.entries(PAYMENT_METHODS)
+        .map(([key, label]) => {
+            const info = SettingsStore.getPaymentInfo(key);
+            return info ? `**${label}:**\n${info}` : null;
+        })
+        .filter(Boolean);
+    return lines.length > 0 ? lines.join("\n\n") : "_Nenhuma forma de pagamento configurada ainda — combine direto com o comprador._";
 }
 
-async function handleSelectMenu(interaction) {
-    if (interaction.customId !== "store:select_method") return;
+function ticketActionsRow(orderId) {
+    return new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`store:confirm:${orderId}`).setLabel("✅ Confirmar Pagamento").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`store:reject:${orderId}`).setLabel("❌ Rejeitar").setStyle(ButtonStyle.Danger)
+    );
+}
 
-    const method = interaction.values[0];
-    const info = SettingsStore.getPaymentInfo(method);
+function closeRow(orderId) {
+    return new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`store:close:${orderId}`).setLabel("🔒 Fechar Ticket").setStyle(ButtonStyle.Secondary)
+    );
+}
 
-    if (!info) {
-        const container = panel({
-            title: "⚠️ Método indisponível",
-            color: 0xe67e22,
-            description: `O método **${PAYMENT_METHODS[method]}** ainda não foi configurado pelo admin. Escolhe outro ou tenta mais tarde.`
-        });
-        return interaction.update(v2Payload(container, [methodSelectRow()]));
+async function createTicketChannel(guild, buyer) {
+    const categoryId = SettingsStore.get("ticketCategoryId");
+    const adminRoleId = config.adminRoleId;
+
+    const overwrites = [
+        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+        { id: buyer.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] }
+    ];
+    if (adminRoleId) {
+        overwrites.push({ id: adminRoleId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] });
     }
 
-    const order = OrderStore.create({ discordId: interaction.user.id, method });
+    const safeName = buyer.username.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 20) || "comprador";
 
-    const container = panel({
-        title: `💳 Pagamento via ${PAYMENT_METHODS[method]}`,
-        description: info,
-        fields: [{ name: "Pedido", value: `\`${order.id}\`` }],
-        footer: "Depois de pagar, clica no botão abaixo pra avisar o admin."
+    return guild.channels.create({
+        name: `ticket-${safeName}`,
+        type: ChannelType.GuildText,
+        parent: categoryId || null,
+        permissionOverwrites: overwrites,
+        topic: `Compra de ${buyer.tag} (${buyer.id})`
     });
-
-    const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`store:paid:${order.id}`).setLabel("✅ Já paguei").setStyle(ButtonStyle.Success)
-    );
-
-    return interaction.update(v2Payload(container, [row]));
 }
 
 async function handleButton(interaction) {
-    const [, action, orderId] = interaction.customId.split(":");
+    const [, action, param] = interaction.customId.split(":");
 
-    if (action === "paid") {
-        const order = OrderStore.get(orderId);
-        if (!order) {
-            return interaction.reply({ content: "❌ Pedido não encontrado (talvez tenha expirado).", ephemeral: true });
+    if (action === "buy") {
+        const plan = param;
+        if (!PLAN_LABELS[plan]) {
+            return interaction.reply({ content: "❌ Plano inválido.", ephemeral: true });
         }
-        if (order.discordId !== interaction.user.id) {
-            return interaction.reply({ content: "❌ Esse pedido não é seu.", ephemeral: true });
-        }
-        if (order.status !== "pending") {
-            const container = panel({ title: "Pedido", description: orderStatusLine(order) });
-            return interaction.update(v2Payload(container, []));
+        if (!interaction.inGuild()) {
+            return interaction.reply({ content: "❌ Isso só funciona dentro do servidor.", ephemeral: true });
         }
 
-        OrderStore.markPaidClaimed(orderId);
+        await interaction.deferReply({ ephemeral: true });
 
-        const claimedContainer = panel({
-            title: "📨 Avisamos o admin!",
-            description: `Seu pedido \`${order.id}\` foi marcado como pago. Assim que um admin confirmar, você recebe a key aqui no privado — fica de olho nas mensagens diretas.`
-        });
-        await interaction.update(v2Payload(claimedContainer, []));
-
-        const channel = await getSalesChannel(interaction.client);
-        if (!channel) {
-            logger.warn(`Pedido ${order.id} marcado como pago, mas nenhum canal de vendas está configurado (/admin → Vendas).`);
-            return;
+        let channel;
+        try {
+            channel = await createTicketChannel(interaction.guild, interaction.user);
+        } catch (err) {
+            logger.error(`Falha ao criar canal de ticket -> ${err.message}`);
+            return interaction.editReply({ content: "❌ Não consegui criar o canal do ticket. Verifica se o bot tem permissão de 'Gerenciar Canais'." });
         }
 
-        const notifyContainer = panel({
-            title: "🛒 Novo pedido pra confirmar",
-            color: 0xf1c40f,
+        const order = OrderStore.create({ discordId: interaction.user.id, plan, channelId: channel.id });
+
+        const days = PLAN_DAYS[plan];
+        const ticketContainer = panel({
+            title: `🎫 Ticket de compra — ${PLAN_LABELS[plan]}`,
+            description:
+                `Olá <@${interaction.user.id}>! Aqui está seu ticket pra comprar o plano **${PLAN_LABELS[plan]}** por **${priceLine(plan)}**.\n\n` +
+                `Combine a forma de pagamento com a administração. Referência do que já está configurado:\n\n${paymentReferenceText()}`,
             fields: [
                 { name: "Pedido", value: `\`${order.id}\`` },
-                { name: "Comprador", value: `<@${order.discordId}>` },
-                { name: "Método", value: PAYMENT_METHODS[order.method] }
-            ]
+                { name: "Validade da key", value: days ? `${days} dia(s)` : "vitalícia (lifetime)" }
+            ],
+            footer: "Um admin confirma o pagamento aqui pra liberar a key."
         });
-        const notifyRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`store:confirm:${order.id}`).setLabel("✅ Confirmar pagamento").setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`store:reject:${order.id}`).setLabel("❌ Rejeitar").setStyle(ButtonStyle.Danger)
-        );
-        await channel.send(v2Payload(notifyContainer, [notifyRow]));
+
+        await channel.send(v2Payload(ticketContainer, [ticketActionsRow(order.id)]));
+        await interaction.editReply({ content: `✅ Ticket criado: ${channel}` });
+
+        await sendActionLog(interaction.client, {
+            title: "🎫 Novo ticket de compra",
+            actorId: interaction.user.id,
+            description: `Pedido \`${order.id}\` — plano **${PLAN_LABELS[plan]}** — canal ${channel}.`
+        });
         return;
     }
 
@@ -138,15 +143,15 @@ async function handleButton(interaction) {
             return interaction.reply({ content: "❌ Só admins podem confirmar/rejeitar pedidos.", ephemeral: true });
         }
 
-        const order = OrderStore.get(orderId);
+        const order = OrderStore.get(param);
         if (!order) {
             const container = panel({ title: "❌ Pedido não encontrado", description: "Esse pedido não existe mais." });
             return interaction.update(v2Payload(container, []));
         }
 
         if (action === "confirm") {
-            const defaultDays = SettingsStore.get("defaultExpiryDays");
-            const keyEntry = KeyStore.create({ daysValid: defaultDays, note: `venda (${order.method}) - pedido ${order.id}` });
+            const days = PLAN_DAYS[order.plan];
+            const keyEntry = KeyStore.create({ daysValid: days, note: `venda (${order.plan}) - pedido ${order.id}` });
             KeyStore.redeem(keyEntry.key, order.discordId);
 
             const result = OrderStore.confirm(order.id, keyEntry.key, interaction.user.id);
@@ -178,17 +183,17 @@ async function handleButton(interaction) {
                     { name: "Pedido", value: `\`${order.id}\`` },
                     { name: "Key gerada", value: `\`${keyEntry.key}\`` },
                     { name: "Vencimento", value: fmtDate(keyEntry.expiresAt) },
-                    { name: "DM enviada?", value: dmOk ? "sim" : "❌ falhou (DMs fechadas?) — manda a key manualmente" }
+                    { name: "DM enviada?", value: dmOk ? "sim" : "❌ falhou (DMs fechadas?) — a key já está escrita aqui em cima" }
                 ]
             });
-            await interaction.update(v2Payload(doneContainer, []));
+            await interaction.update(v2Payload(doneContainer, [closeRow(order.id)]));
 
             logger.action(interaction.user.id, `confirmou o pedido ${order.id} e gerou a key ${keyEntry.key} pra <@${order.discordId}>`);
             await sendActionLog(interaction.client, {
                 title: "🛒 Pedido confirmado",
                 actorId: interaction.user.id,
                 color: 0x2ecc71,
-                description: `Pedido \`${order.id}\` (${PAYMENT_METHODS[order.method]}) — key \`${keyEntry.key}\` gerada pra <@${order.discordId}>. Vencimento: ${fmtDate(keyEntry.expiresAt)}.`
+                description: `Pedido \`${order.id}\` (${PLAN_LABELS[order.plan]}) — key \`${keyEntry.key}\` gerada pra <@${order.discordId}>. Vencimento: ${fmtDate(keyEntry.expiresAt)}.`
             });
             return;
         }
@@ -199,30 +204,37 @@ async function handleButton(interaction) {
                 return interaction.reply({ content: "⚠️ Esse pedido já tinha sido decidido antes.", ephemeral: true });
             }
 
-            try {
-                const buyer = await interaction.client.users.fetch(order.discordId);
-                await buyer.send(`❌ Seu pedido \`${order.id}\` foi rejeitado pelo admin. Se acha que é engano, entra em contato no servidor.`);
-            } catch {
-                // sem DM, sem problema — o admin já vê o resultado no painel
-            }
-
             const rejectedContainer = panel({
                 title: "❌ Pedido rejeitado",
                 color: 0xe74c3c,
                 fields: [{ name: "Pedido", value: `\`${order.id}\`` }, { name: "Comprador", value: `<@${order.discordId}>` }]
             });
-            await interaction.update(v2Payload(rejectedContainer, []));
+            await interaction.update(v2Payload(rejectedContainer, [closeRow(order.id)]));
 
             logger.action(interaction.user.id, `rejeitou o pedido ${order.id} (comprador: ${order.discordId})`);
             await sendActionLog(interaction.client, {
                 title: "🛒 Pedido rejeitado",
                 actorId: interaction.user.id,
                 color: 0xe74c3c,
-                description: `Pedido \`${order.id}\` (${PAYMENT_METHODS[order.method]}) — comprador <@${order.discordId}>.`
+                description: `Pedido \`${order.id}\` (${PLAN_LABELS[order.plan]}) — comprador <@${order.discordId}>.`
             });
             return;
         }
     }
+
+    if (action === "close") {
+        const order = OrderStore.get(param);
+        const isBuyer = order && order.discordId === interaction.user.id;
+        if (!isAdmin(interaction) && !isBuyer) {
+            return interaction.reply({ content: "❌ Só o comprador ou um admin pode fechar esse ticket.", ephemeral: true });
+        }
+
+        await interaction.reply({ content: "🔒 Fechando o ticket em 5 segundos...", ephemeral: false });
+        setTimeout(() => {
+            interaction.channel?.delete().catch(() => {});
+        }, 5000);
+        return;
+    }
 }
 
-module.exports = { initialPanel, handleSelectMenu, handleButton };
+module.exports = { shopPanel, handleButton };

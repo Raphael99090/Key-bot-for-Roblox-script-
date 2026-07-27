@@ -124,33 +124,46 @@ function configPanel() {
 function paymentsPanel() {
     const s = SettingsStore.getAll();
     const preview = (text) => (text ? (text.length > 60 ? `${text.slice(0, 60)}…` : text) : "não configurado");
+    const { PLAN_LABELS } = SettingsStore;
 
     const container = panel({
-        title: "💳 Vendas / Pagamentos",
-        description: "Configure as instruções que o cliente vê em `/comprar`, e o canal onde os pedidos aparecem pra você confirmar.",
+        title: "💳 Vendas / Loja",
+        description: "Configure os planos que aparecem em `/comprar` e as instruções de pagamento mostradas dentro de cada ticket.",
         fields: [
+            { name: "Descrição da loja", value: preview(s.shopDescription) },
+            { name: `Plano ${PLAN_LABELS.day}`, value: preview(s.plans?.day) },
+            { name: `Plano ${PLAN_LABELS.week}`, value: preview(s.plans?.week) },
+            { name: `Plano ${PLAN_LABELS.month}`, value: preview(s.plans?.month) },
+            { name: `Plano ${PLAN_LABELS.lifetime}`, value: preview(s.plans?.lifetime) },
+            { name: "Categoria dos tickets", value: s.ticketCategoryId ? `<#${s.ticketCategoryId}>` : "sem categoria (cria na raiz do servidor)" },
             { name: "Pix", value: preview(s.paymentInfo?.pix) },
             { name: "Bitcoin", value: preview(s.paymentInfo?.btc) },
             { name: "Cartão", value: preview(s.paymentInfo?.card) },
-            { name: "Moeda local", value: preview(s.paymentInfo?.local) },
-            { name: "Canal de pedidos", value: s.salesChannelId ? `<#${s.salesChannelId}>` : (s.logChannelId ? `<#${s.logChannelId}> (canal de log)` : "não configurado") }
+            { name: "Moeda local", value: preview(s.paymentInfo?.local) }
         ]
     });
 
     const row1 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("admin:shop_description").setLabel("Descrição da loja").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("admin:plan_day").setLabel(`Preço ${PLAN_LABELS.day}`).setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("admin:plan_week").setLabel(`Preço ${PLAN_LABELS.week}`).setStyle(ButtonStyle.Secondary)
+    );
+    const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("admin:plan_month").setLabel(`Preço ${PLAN_LABELS.month}`).setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("admin:plan_lifetime").setLabel(`Preço ${PLAN_LABELS.lifetime}`).setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("admin:ticket_category").setLabel("Categoria dos tickets").setStyle(ButtonStyle.Secondary)
+    );
+    const row3 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:payment_pix").setLabel("Editar Pix").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("admin:payment_btc").setLabel("Editar Bitcoin").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("admin:payment_card").setLabel("Editar Cartão").setStyle(ButtonStyle.Secondary)
     );
-    const row2 = new ActionRowBuilder().addComponents(
+    const row4 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:payment_local").setLabel("Editar Moeda Local").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("admin:payment_saleschannel").setLabel("Canal de pedidos").setStyle(ButtonStyle.Secondary)
-    );
-    const row3 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:back").setLabel("⬅️ Voltar").setStyle(ButtonStyle.Secondary)
     );
 
-    return v2Payload(container, [row1, row2, row3]);
+    return v2Payload(container, [row1, row2, row3, row4]);
 }
 
 function backRow() {
@@ -271,8 +284,23 @@ const MODALS = {
     payment_local: () => modal("admin_modal:payment_local", "Instruções — Moeda local", [
         { id: "texto", label: "Instruções de pagamento", long: true, required: false }
     ]),
-    payment_saleschannel: () => modal("admin_modal:payment_saleschannel", "Canal de pedidos", [
-        { id: "canal", label: "ID do canal (vazio = usa o canal de log)", required: false, placeholder: "ex: 123456789012345678" }
+    shop_description: () => modal("admin_modal:shop_description", "Descrição da loja", [
+        { id: "texto", label: "Texto que aparece no topo do /comprar", long: true, required: false }
+    ]),
+    plan_day: () => modal("admin_modal:plan_day", "Preço — 1 Dia", [
+        { id: "preco", label: "Preço (texto livre, ex: R$ 5,00)", required: false }
+    ]),
+    plan_week: () => modal("admin_modal:plan_week", "Preço — 7 Dias", [
+        { id: "preco", label: "Preço (texto livre, ex: R$ 15,00)", required: false }
+    ]),
+    plan_month: () => modal("admin_modal:plan_month", "Preço — 30 Dias", [
+        { id: "preco", label: "Preço (texto livre, ex: R$ 30,00)", required: false }
+    ]),
+    plan_lifetime: () => modal("admin_modal:plan_lifetime", "Preço — Lifetime", [
+        { id: "preco", label: "Preço (texto livre, ex: R$ 80,00)", required: false }
+    ]),
+    ticket_category: () => modal("admin_modal:ticket_category", "Categoria dos tickets", [
+        { id: "categoria", label: "ID da categoria (vazio = sem categoria)", required: false, placeholder: "ex: 123456789012345678" }
     ]),
     delete_all_keys: () => modal("admin_modal:delete_all_keys", "⚠️ Apagar TODAS as keys", [
         { id: "confirmacao", label: 'Digite exatamente "APAGAR" pra confirmar', placeholder: "APAGAR" }
@@ -541,12 +569,27 @@ async function handleModalSubmit(interaction) {
         return logAction(interaction, `atualizou as instruções de pagamento (${method})`);
     }
 
-    if (action === "payment_saleschannel") {
-        const raw = get("canal");
-        const id = raw ? raw.replace(/[<#>]/g, "") : null;
-        SettingsStore.set("salesChannelId", id || null);
+    if (action === "shop_description") {
+        const texto = get("texto") || "";
+        SettingsStore.set("shopDescription", texto);
         await respondToPanel(interaction, paymentsPanel());
-        return logAction(interaction, `definiu o canal de pedidos: ${id ? `<#${id}>` : "desativado (usa o de log)"}`);
+        return logAction(interaction, "atualizou a descrição da loja");
+    }
+
+    if (["plan_day", "plan_week", "plan_month", "plan_lifetime"].includes(action)) {
+        const plan = action.replace("plan_", "");
+        const preco = get("preco") || "";
+        SettingsStore.setPlanPrice(plan, preco);
+        await respondToPanel(interaction, paymentsPanel());
+        return logAction(interaction, `definiu o preço do plano ${plan}: ${preco || "sem preço"}`);
+    }
+
+    if (action === "ticket_category") {
+        const raw = get("categoria");
+        const id = raw ? raw.replace(/[<#>]/g, "") : null;
+        SettingsStore.set("ticketCategoryId", id || null);
+        await respondToPanel(interaction, paymentsPanel());
+        return logAction(interaction, `definiu a categoria dos tickets: ${id ? `<#${id}>` : "nenhuma"}`);
     }
 
     if (action === "delete_all_keys") {

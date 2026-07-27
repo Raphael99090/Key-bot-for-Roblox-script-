@@ -47,7 +47,9 @@ function panel({ title, description = null, fields = [], color = 0x8a3ffc, foote
 /**
  * Payload final pra reply/update/followUp usando Components V2.
  * containers pode ser um Container só ou uma lista deles; rows são as
- * ActionRow de botão/select, que continuam funcionando normalmente.
+ * ActionRow de botão/select — agora aninhadas DENTRO do último container
+ * (via addActionRowComponents), então os botões aparecem dentro da caixa
+ * colorida em vez de soltos abaixo dela.
  * IMPORTANTE: a flag precisa estar em TODA resposta (reply/update/
  * followUp) da mensagem, inclusive nas edições — não é "seta uma vez
  * só". content e embeds não podem ser usados junto (por isso content
@@ -58,13 +60,19 @@ function panel({ title, description = null, fields = [], color = 0x8a3ffc, foote
  */
 function v2Payload(containers, rows = [], { ephemeral = false } = {}) {
     const list = Array.isArray(containers) ? containers : [containers];
+
+    if (rows.length > 0) {
+        const last = list[list.length - 1];
+        for (const row of rows) last.addActionRowComponents(row);
+    }
+
     let flags = MessageFlags.IsComponentsV2;
     if (ephemeral) flags |= MessageFlags.Ephemeral;
 
     return {
         content: null,
         embeds: [],
-        components: [...list, ...rows],
+        components: list,
         flags
     };
 }

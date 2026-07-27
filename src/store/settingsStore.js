@@ -13,18 +13,44 @@ const DEFAULTS = {
     trialDays: 1,
     // Canal onde o bot avisa quando uma key é gerada/resgatada/revogada (opcional).
     logChannelId: null,
-    // Canal onde o bot posta os pedidos pra você confirmar/rejeitar
-    // (botões de Confirmar/Rejeitar aparecem lá). Se vazio, usa logChannelId.
-    salesChannelId: null,
-    // Instruções de pagamento mostradas pro cliente em cada método.
-    // Texto livre — coloque a chave Pix, o endereço BTC, o link de
-    // cartão, etc. Vazio = método aparece como "ainda não configurado".
+    // Categoria onde os canais de ticket de compra são criados (opcional —
+    // sem isso, o canal do ticket é criado sem categoria).
+    ticketCategoryId: null,
+    // Texto configurável que aparece no topo da loja (/comprar).
+    shopDescription: "",
+    // Preço mostrado em cada botão de plano. Texto livre (ex: "R$ 15,00").
+    // Vazio = o plano aparece com "Preço a definir".
+    plans: {
+        day: "",
+        week: "",
+        month: "",
+        lifetime: ""
+    },
+    // Instruções de pagamento mostradas dentro do ticket (referência pro
+    // admin não precisar retranscrever a cada venda). Texto livre — chave
+    // Pix, endereço BTC, link de cartão, etc.
     paymentInfo: {
         pix: "",
         btc: "",
         card: "",
         local: ""
     }
+};
+
+const PLAN_LABELS = {
+    day: "1 Dia",
+    week: "7 Dias",
+    month: "30 Dias",
+    lifetime: "Lifetime"
+};
+
+// Dias de validade de cada plano — lifetime é null (nunca expira).
+// Isso é estrutural, não configurável (o preço sim, o prazo não).
+const PLAN_DAYS = {
+    day: 1,
+    week: 7,
+    month: 30,
+    lifetime: null
 };
 
 const PAYMENT_METHODS = {
@@ -72,7 +98,23 @@ const SettingsStore = {
         return true;
     },
 
-    PAYMENT_METHODS
+    /** Preço configurado pra um plano ("day"|"week"|"month"|"lifetime"). */
+    getPlanPrice(plan) {
+        return read().plans?.[plan] || "";
+    },
+
+    /** Define o preço de um plano específico. */
+    setPlanPrice(plan, price) {
+        if (!(plan in PLAN_LABELS)) return false;
+        const data = read();
+        data.plans = { ...data.plans, [plan]: price };
+        writeAll(data);
+        return true;
+    },
+
+    PAYMENT_METHODS,
+    PLAN_LABELS,
+    PLAN_DAYS
 };
 
 module.exports = SettingsStore;

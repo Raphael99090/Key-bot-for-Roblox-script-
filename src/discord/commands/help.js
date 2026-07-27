@@ -10,7 +10,7 @@ module.exports = {
         const container = panel({
             title: "📖 Comandos — 1NXITER KeyBot",
             fields: [
-                { name: "/comprar", value: "Compra uma key (Pix, Bitcoin, cartão ou moeda local) — escolhe o método, paga, avisa o admin e recebe a key no privado." },
+                { name: "/comprar", value: "Escolhe um plano (1 dia, 7 dias, 30 dias ou lifetime) — cria um ticket privado com a administração pra combinar o pagamento e receber a key." },
                 { name: "/key redeem <key>", value: "Vincula uma key à sua conta." },
                 { name: "/key check <key>", value: "Vê o status de uma key." },
                 { name: "/key trial", value: "Pega uma key de teste grátis (1 por pessoa)." },
