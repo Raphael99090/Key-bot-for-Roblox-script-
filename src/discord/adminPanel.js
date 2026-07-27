@@ -14,10 +14,7 @@ const { isAdmin } = require("../utils/permissions");
 const logger = require("../utils/logger");
 const { panel, v2Payload } = require("./v2");
 const { sendActionLog } = require("./logNotifier");
-
-function fmtDate(ts) {
-    return ts ? new Date(ts).toLocaleString("pt-BR") : "nunca";
-}
+const { fmtDate } = require("../utils/format");
 
 function statusOf(entry) {
     if (entry.revoked) return "🔴 Revogada";
@@ -88,7 +85,11 @@ function mainPanel() {
         new ButtonBuilder().setCustomId("admin:payments").setLabel("Vendas / Pagamentos").setEmoji("💳").setStyle(ButtonStyle.Secondary)
     );
 
-    return v2Payload(container, [row1, row2, row3, row4]);
+    const row5 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("admin:delete_all_keys").setLabel("⚠️ Apagar TODAS as keys").setStyle(ButtonStyle.Danger)
+    );
+
+    return v2Payload(container, [row1, row2, row3, row4, row5]);
 }
 
 function configPanel() {
@@ -272,6 +273,9 @@ const MODALS = {
     ]),
     payment_saleschannel: () => modal("admin_modal:payment_saleschannel", "Canal de pedidos", [
         { id: "canal", label: "ID do canal (vazio = usa o canal de log)", required: false, placeholder: "ex: 123456789012345678" }
+    ]),
+    delete_all_keys: () => modal("admin_modal:delete_all_keys", "⚠️ Apagar TODAS as keys", [
+        { id: "confirmacao", label: 'Digite exatamente "APAGAR" pra confirmar', placeholder: "APAGAR" }
     ])
 };
 
@@ -423,7 +427,7 @@ async function handleModalSubmit(interaction) {
 
         await respondToPanel(interaction, v2Payload(container, [backRow()]));
         const keysList = entries.map(e => e.key).join(", ");
-        return logAction(interaction, `gerou ${quantidade} key(s): ${keysList}${nota ? ` (nota: "${nota}")` : ""}`);
+        return logAction(interaction, `gerou ${quantidade} key(s): ${keysList} — vencimento: ${fmtDate(entries[0].expiresAt)}${nota ? ` (nota: "${nota}")` : ""}`);
     }
 
     if (action === "revoke") {
@@ -454,7 +458,7 @@ async function handleModalSubmit(interaction) {
             description: `Key \`${key}\` — nova validade: ${fmtDate(result.entry.expiresAt)}.`
         });
         await respondToPanel(interaction, v2Payload(container, [backRow()]));
-        return logAction(interaction, `renovou a key \`${key}\` por +${dias} dias`);
+        return logAction(interaction, `renovou a key \`${key}\` por +${dias} dias — novo vencimento: ${fmtDate(result.entry.expiresAt)}`);
     }
 
     if (action === "purge") {
@@ -543,6 +547,34 @@ async function handleModalSubmit(interaction) {
         SettingsStore.set("salesChannelId", id || null);
         await respondToPanel(interaction, paymentsPanel());
         return logAction(interaction, `definiu o canal de pedidos: ${id ? `<#${id}>` : "desativado (usa o de log)"}`);
+    }
+
+    if (action === "delete_all_keys") {
+        const confirmacao = get("confirmacao");
+        if (confirmacao?.toUpperCase() !== "APAGAR") {
+            const container = panel({
+                title: "❌ Cancelado",
+                description: 'Você não digitou exatamente "APAGAR" — nada foi apagado.'
+            });
+            return respondToPanel(interaction, v2Payload(container, [backRow()]));
+        }
+
+        const removidas = KeyStore.deleteAll();
+        const container = panel({
+            title: "🗑️ Todas as keys foram apagadas",
+            color: 0xe74c3c,
+            description: `${removidas.length} key(s) removida(s) do banco. Essa ação não tem volta — se precisar recuperar, use o backup mais recente em \`data/keys.json.bak-*\`, se existir.`
+        });
+        await respondToPanel(interaction, v2Payload(container, [backRow()]));
+
+        // Log completo (arquivo sempre; canal mostra até 30 pra não ficar gigante)
+        logger.action(interaction.user.id, `APAGOU TODAS AS ${removidas.length} KEY(S): ${removidas.join(", ")}`);
+        return sendActionLog(interaction.client, {
+            title: "🗑️⚠️ TODAS as keys foram apagadas",
+            actorId: interaction.user.id,
+            color: 0xe74c3c,
+            description: `${removidas.length} key(s) removida(s) permanentemente.${removidas.length ? `\n\n${removidas.slice(0, 30).join(", ")}${removidas.length > 30 ? "…" : ""}` : ""}`
+        });
     }
 }
 

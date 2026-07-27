@@ -10,6 +10,7 @@ const OrderStore = require("../store/orderStore");
 const { isAdmin } = require("../utils/permissions");
 const logger = require("../utils/logger");
 const { panel, v2Payload } = require("./v2");
+const { fmtDate } = require("../utils/format");
 const { sendActionLog } = require("./logNotifier");
 
 const { PAYMENT_METHODS } = SettingsStore;
@@ -161,6 +162,7 @@ async function handleButton(interaction) {
                     color: 0x2ecc71,
                     description:
                         `Pagamento confirmado — aqui está sua key:\n\n\`${keyEntry.key}\`\n\n` +
+                        `**Vence em:** ${fmtDate(keyEntry.expiresAt)}\n\n` +
                         `**Como usar:** dentro do jogo, digite \`/key redeem key:${keyEntry.key}\` aqui no Discord ` +
                         `pra vincular ela na sua conta, depois cole a key na tela do hub quando ele carregar.`
                 });
@@ -175,6 +177,7 @@ async function handleButton(interaction) {
                 fields: [
                     { name: "Pedido", value: `\`${order.id}\`` },
                     { name: "Key gerada", value: `\`${keyEntry.key}\`` },
+                    { name: "Vencimento", value: fmtDate(keyEntry.expiresAt) },
                     { name: "DM enviada?", value: dmOk ? "sim" : "❌ falhou (DMs fechadas?) — manda a key manualmente" }
                 ]
             });
@@ -185,7 +188,7 @@ async function handleButton(interaction) {
                 title: "🛒 Pedido confirmado",
                 actorId: interaction.user.id,
                 color: 0x2ecc71,
-                description: `Pedido \`${order.id}\` (${PAYMENT_METHODS[order.method]}) — key \`${keyEntry.key}\` gerada pra <@${order.discordId}>.`
+                description: `Pedido \`${order.id}\` (${PAYMENT_METHODS[order.method]}) — key \`${keyEntry.key}\` gerada pra <@${order.discordId}>. Vencimento: ${fmtDate(keyEntry.expiresAt)}.`
             });
             return;
         }

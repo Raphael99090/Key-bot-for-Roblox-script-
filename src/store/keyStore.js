@@ -120,6 +120,17 @@ const KeyStore = {
     },
 
     /**
+     * Apaga TODAS as keys, sem exceção — não olha status nem validade.
+     * Sem volta. Retorna a lista das keys removidas (pra log/confirmação).
+     */
+    deleteAll() {
+        const all = readAll();
+        const removed = Object.keys(all);
+        writeAll({});
+        return removed;
+    },
+
+    /**
      * Mesma seleção do purge(), mas sem apagar nada — só pra mostrar
      * numa tela de confirmação antes do usuário decidir de verdade.
      */

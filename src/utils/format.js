@@ -20,4 +20,14 @@ function fmtDuration(ms) {
     return `${seconds}s`;
 }
 
-module.exports = { fmtDuration };
+/**
+ * Formata a expiração de uma key. Usa o timestamp nativo do Discord
+ * (<t:...:f>) — mostra a data certa no fuso de quem estiver lendo, sem
+ * precisar formatar manualmente. "nunca expira" quando não há data.
+ */
+function fmtDate(ts) {
+    if (!ts) return "nunca expira";
+    return `<t:${Math.floor(ts / 1000)}:f>`;
+}
+
+module.exports = { fmtDuration, fmtDate };

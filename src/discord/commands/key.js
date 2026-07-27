@@ -3,12 +3,8 @@ const KeyStore = require("../../store/keyStore");
 const SettingsStore = require("../../store/settingsStore");
 const ResetCodeStore = require("../../store/resetCodeStore");
 const TrialStore = require("../../store/trialStore");
-const { fmtDuration } = require("../../utils/format");
+const { fmtDuration, fmtDate } = require("../../utils/format");
 const { panel, v2Payload } = require("../v2");
-
-function fmtDate(ts) {
-    return ts ? new Date(ts).toLocaleString("pt-BR") : "nunca";
-}
 
 function statusOf(entry) {
     if (entry.revoked) return "🔴 Revogada";
