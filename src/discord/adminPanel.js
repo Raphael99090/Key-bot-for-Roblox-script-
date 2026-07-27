@@ -13,6 +13,7 @@ const ResetCodeStore = require("../store/resetCodeStore");
 const { isAdmin } = require("../utils/permissions");
 const logger = require("../utils/logger");
 const { panel, v2Payload } = require("./v2");
+const { sendActionLog } = require("./logNotifier");
 
 function fmtDate(ts) {
     return ts ? new Date(ts).toLocaleString("pt-BR") : "nunca";
@@ -24,21 +25,14 @@ function statusOf(entry) {
     return "🟢 Ativa";
 }
 
-async function notifyLogChannel(interaction, text) {
-    const channelId = SettingsStore.get("logChannelId");
-    if (!channelId) return;
-    try {
-        const channel = await interaction.client.channels.fetch(channelId);
-        if (channel?.isTextBased()) await channel.send(text);
-    } catch (err) {
-        logger.warn(`Falha ao enviar log no canal configurado -> ${err.message}`);
-    }
-}
-
-/** Loga em arquivo (sempre) e manda pro canal configurado (se houver), numa chamada só. */
+/** Loga em arquivo (sempre) e manda um painel pro canal configurado (se houver). */
 async function logAction(interaction, plainText) {
     logger.action(interaction.user.id, plainText);
-    await notifyLogChannel(interaction, `${plainText.charAt(0).toUpperCase()}${plainText.slice(1)} — por <@${interaction.user.id}>.`);
+    await sendActionLog(interaction.client, {
+        title: "🛠️ Ação administrativa",
+        actorId: interaction.user.id,
+        description: `${plainText.charAt(0).toUpperCase()}${plainText.slice(1)}.`
+    });
 }
 
 /**
@@ -384,12 +378,12 @@ async function handleButton(interaction) {
     if (action === "confirm_purge") {
         const dias = Number(param) || 30;
         const removidas = KeyStore.purge(dias);
-        await logAction(interaction, `limpou ${removidas.length} key(s) antiga(s) (+${dias} dias)${removidas.length ? `: ${removidas.join(", ")}` : ""}`);
         const container = panel({
             title: "🧹 Limpeza concluída",
             description: `${removidas.length} key(s) revogada(s)/expirada(s) há mais de ${dias} dias foram removidas.`
         });
-        return interaction.update(v2Payload(container, [backRow()]));
+        await interaction.update(v2Payload(container, [backRow()]));
+        return logAction(interaction, `limpou ${removidas.length} key(s) antiga(s) (+${dias} dias)${removidas.length ? `: ${removidas.join(", ")}` : ""}`);
     }
 
     if (action === "confirm_revoke") {

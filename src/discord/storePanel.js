@@ -10,6 +10,7 @@ const OrderStore = require("../store/orderStore");
 const { isAdmin } = require("../utils/permissions");
 const logger = require("../utils/logger");
 const { panel, v2Payload } = require("./v2");
+const { sendActionLog } = require("./logNotifier");
 
 const { PAYMENT_METHODS } = SettingsStore;
 
@@ -180,6 +181,12 @@ async function handleButton(interaction) {
             await interaction.update(v2Payload(doneContainer, []));
 
             logger.action(interaction.user.id, `confirmou o pedido ${order.id} e gerou a key ${keyEntry.key} pra <@${order.discordId}>`);
+            await sendActionLog(interaction.client, {
+                title: "🛒 Pedido confirmado",
+                actorId: interaction.user.id,
+                color: 0x2ecc71,
+                description: `Pedido \`${order.id}\` (${PAYMENT_METHODS[order.method]}) — key \`${keyEntry.key}\` gerada pra <@${order.discordId}>.`
+            });
             return;
         }
 
@@ -204,6 +211,12 @@ async function handleButton(interaction) {
             await interaction.update(v2Payload(rejectedContainer, []));
 
             logger.action(interaction.user.id, `rejeitou o pedido ${order.id} (comprador: ${order.discordId})`);
+            await sendActionLog(interaction.client, {
+                title: "🛒 Pedido rejeitado",
+                actorId: interaction.user.id,
+                color: 0xe74c3c,
+                description: `Pedido \`${order.id}\` (${PAYMENT_METHODS[order.method]}) — comprador <@${order.discordId}>.`
+            });
             return;
         }
     }
