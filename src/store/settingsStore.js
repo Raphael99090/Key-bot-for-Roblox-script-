@@ -1,5 +1,4 @@
-const { paths } = require("../config");
-const { createJsonFile } = require("../utils/jsonFile");
+const db = require("../db");
 
 const DEFAULTS = {
     // Dias de validade padrão quando /key generate não especifica.
@@ -13,22 +12,19 @@ const DEFAULTS = {
     trialDays: 1,
     // Canal onde o bot avisa quando uma key é gerada/resgatada/revogada (opcional).
     logChannelId: null,
-    // Categoria onde os canais de ticket de compra são criados (opcional —
-    // sem isso, o canal do ticket é criado sem categoria).
-    ticketCategoryId: null,
+    // Canal onde os tickets de compra (threads) são criados. Vazio = usa
+    // o canal onde /comprar foi digitado.
+    ticketChannelId: null,
     // Texto configurável que aparece no topo da loja (/comprar).
     shopDescription: "",
     // Preço mostrado em cada botão de plano. Texto livre (ex: "R$ 15,00").
-    // Vazio = o plano aparece com "Preço a definir".
     plans: {
         day: "",
         week: "",
         month: "",
         lifetime: ""
     },
-    // Instruções de pagamento mostradas dentro do ticket (referência pro
-    // admin não precisar retranscrever a cada venda). Texto livre — chave
-    // Pix, endereço BTC, link de cartão, etc.
+    // Instruções de pagamento mostradas dentro do ticket (referência).
     paymentInfo: {
         pix: "",
         btc: "",
@@ -60,55 +56,64 @@ const PAYMENT_METHODS = {
     local: "Moeda local"
 };
 
-const { readAll, writeAll } = createJsonFile(paths.settings, DEFAULTS);
+const stmts = {
+    get: db.prepare(`SELECT value FROM settings WHERE key = ?`),
+    set: db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+};
 
-function read() {
-    return { ...DEFAULTS, ...readAll() };
+function readOne(key) {
+    const row = stmts.get.get(key);
+    return row ? JSON.parse(row.value) : DEFAULTS[key];
+}
+
+function writeOne(key, value) {
+    stmts.set.run(key, JSON.stringify(value));
 }
 
 const SettingsStore = {
     getAll() {
-        return read();
+        const result = {};
+        for (const k of Object.keys(DEFAULTS)) result[k] = readOne(k);
+        return result;
     },
+
     get(k) {
-        return read()[k];
+        return readOne(k);
     },
+
     set(k, v) {
         if (!(k in DEFAULTS)) return false;
-        const data = read();
-        data[k] = v;
-        writeAll(data);
+        writeOne(k, v);
         return true;
     },
+
     validKeys() {
         return Object.keys(DEFAULTS);
     },
 
     /** Texto de instrução configurado pra um método ("pix"|"btc"|"card"|"local"). */
     getPaymentInfo(method) {
-        return read().paymentInfo?.[method] || "";
+        return readOne("paymentInfo")?.[method] || "";
     },
 
     /** Define o texto de instrução de um método específico. */
     setPaymentInfo(method, text) {
         if (!(method in PAYMENT_METHODS)) return false;
-        const data = read();
-        data.paymentInfo = { ...data.paymentInfo, [method]: text };
-        writeAll(data);
+        const data = readOne("paymentInfo") || {};
+        writeOne("paymentInfo", { ...data, [method]: text });
         return true;
     },
 
     /** Preço configurado pra um plano ("day"|"week"|"month"|"lifetime"). */
     getPlanPrice(plan) {
-        return read().plans?.[plan] || "";
+        return readOne("plans")?.[plan] || "";
     },
 
     /** Define o preço de um plano específico. */
     setPlanPrice(plan, price) {
         if (!(plan in PLAN_LABELS)) return false;
-        const data = read();
-        data.plans = { ...data.plans, [plan]: price };
-        writeAll(data);
+        const data = readOne("plans") || {};
+        writeOne("plans", { ...data, [plan]: price });
         return true;
     },
 
@@ -118,4 +123,3 @@ const SettingsStore = {
 };
 
 module.exports = SettingsStore;
-

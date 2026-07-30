@@ -1,18 +1,17 @@
-const { paths } = require("../config");
-const { createJsonFile } = require("../utils/jsonFile");
+const db = require("../db");
 
-const { readAll, writeAll } = createJsonFile(paths.trials, {});
+const stmts = {
+    get: db.prepare(`SELECT * FROM trials WHERE discordId = ?`),
+    insert: db.prepare(`INSERT INTO trials (discordId, key, claimedAt) VALUES (?, ?, ?) ON CONFLICT(discordId) DO UPDATE SET key = excluded.key, claimedAt = excluded.claimedAt`)
+};
 
 const TrialStore = {
     hasClaimed(discordId) {
-        return Boolean(readAll()[discordId]);
+        return Boolean(stmts.get.get(discordId));
     },
     markClaimed(discordId, key) {
-        const all = readAll();
-        all[discordId] = { key, claimedAt: Date.now() };
-        writeAll(all);
+        stmts.insert.run(discordId, key, Date.now());
     }
 };
 
 module.exports = TrialStore;
-

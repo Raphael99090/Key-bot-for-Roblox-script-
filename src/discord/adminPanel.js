@@ -10,6 +10,7 @@ const {
 const KeyStore = require("../store/keyStore");
 const SettingsStore = require("../store/settingsStore");
 const ResetCodeStore = require("../store/resetCodeStore");
+const CouponStore = require("../store/couponStore");
 const { isAdmin } = require("../utils/permissions");
 const logger = require("../utils/logger");
 const { panel, v2Payload } = require("./v2");
@@ -135,7 +136,7 @@ function paymentsPanel() {
             { name: `Plano ${PLAN_LABELS.week}`, value: preview(s.plans?.week) },
             { name: `Plano ${PLAN_LABELS.month}`, value: preview(s.plans?.month) },
             { name: `Plano ${PLAN_LABELS.lifetime}`, value: preview(s.plans?.lifetime) },
-            { name: "Categoria dos tickets", value: s.ticketCategoryId ? `<#${s.ticketCategoryId}>` : "sem categoria (cria na raiz do servidor)" },
+            { name: "Canal-base dos tickets", value: s.ticketChannelId ? `<#${s.ticketChannelId}>` : "usa o canal onde /comprar foi digitado" },
             { name: "Pix", value: preview(s.paymentInfo?.pix) },
             { name: "Bitcoin", value: preview(s.paymentInfo?.btc) },
             { name: "Cartão", value: preview(s.paymentInfo?.card) },
@@ -151,7 +152,7 @@ function paymentsPanel() {
     const row2 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:plan_month").setLabel(`Preço ${PLAN_LABELS.month}`).setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("admin:plan_lifetime").setLabel(`Preço ${PLAN_LABELS.lifetime}`).setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("admin:ticket_category").setLabel("Categoria dos tickets").setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId("admin:ticket_channel").setLabel("Canal-base dos tickets").setStyle(ButtonStyle.Secondary)
     );
     const row3 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:payment_pix").setLabel("Editar Pix").setStyle(ButtonStyle.Secondary),
@@ -160,10 +161,43 @@ function paymentsPanel() {
     );
     const row4 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:payment_local").setLabel("Editar Moeda Local").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("admin:coupons").setLabel("🎟️ Cupons").setStyle(ButtonStyle.Success)
+    );
+    const row5 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:back").setLabel("⬅️ Voltar").setStyle(ButtonStyle.Secondary)
     );
 
-    return v2Payload(container, [row1, row2, row3, row4]);
+    return v2Payload(container, [row1, row2, row3, row4, row5]);
+}
+
+/** Painel de gestão de cupons. */
+function couponsPanel() {
+    const all = CouponStore.list();
+
+    const lines = all.length === 0
+        ? "Nenhum cupom criado ainda."
+        : all.slice(0, 20).map(c => {
+            const status = !c.active ? "🔴 revogado" : (c.maxUses !== null && c.uses >= c.maxUses) ? "🟠 esgotado" : "🟢 ativo";
+            const usos = c.maxUses !== null ? `${c.uses}/${c.maxUses}` : `${c.uses}/∞`;
+            return `\`${c.code}\` — ${status} — ${usos} uso(s)${c.discountText ? ` — _${c.discountText}_` : ""}`;
+        }).join("\n");
+
+    const container = panel({
+        title: `🎟️ Cupons (${all.length})`,
+        color: 0x2ecc71,
+        description: lines,
+        footer: all.length > 20 ? "Mostrando os 20 primeiros" : null
+    });
+
+    const row1 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("admin:coupon_generate").setLabel("Gerar Cupom").setEmoji("🎟️").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("admin:coupon_revoke").setLabel("Revogar Cupom").setEmoji("🗑️").setStyle(ButtonStyle.Danger)
+    );
+    const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("admin:payments").setLabel("⬅️ Voltar pra Vendas/Loja").setStyle(ButtonStyle.Secondary)
+    );
+
+    return v2Payload(container, [row1, row2]);
 }
 
 function backRow() {
@@ -299,8 +333,16 @@ const MODALS = {
     plan_lifetime: () => modal("admin_modal:plan_lifetime", "Preço — Lifetime", [
         { id: "preco", label: "Preço (texto livre, ex: R$ 80,00)", required: false }
     ]),
-    ticket_category: () => modal("admin_modal:ticket_category", "Categoria dos tickets", [
-        { id: "categoria", label: "ID da categoria (vazio = sem categoria)", required: false, placeholder: "ex: 123456789012345678" }
+    ticket_channel: () => modal("admin_modal:ticket_channel", "Canal-base dos tickets", [
+        { id: "canal", label: "ID do canal (vazio = usa o do /comprar)", required: false, placeholder: "ex: 123456789012345678" }
+    ]),
+    coupon_generate: () => modal("admin_modal:coupon_generate", "Gerar cupom", [
+        { id: "codigo", label: "Código (vazio = gera automático)", required: false, placeholder: "ex: PROMO10" },
+        { id: "desconto", label: "Descrição do desconto", required: false, placeholder: "ex: 10% OFF ou R$5 de desconto" },
+        { id: "usos", label: "Máximo de usos (vazio = ilimitado)", required: false, placeholder: "ex: 10" }
+    ]),
+    coupon_revoke: () => modal("admin_modal:coupon_revoke", "Revogar cupom", [
+        { id: "codigo", label: "Código a revogar" }
     ]),
     delete_all_keys: () => modal("admin_modal:delete_all_keys", "⚠️ Apagar TODAS as keys", [
         { id: "confirmacao", label: 'Digite exatamente "APAGAR" pra confirmar', placeholder: "APAGAR" }
@@ -334,6 +376,10 @@ async function handleButton(interaction) {
 
     if (action === "payments") {
         return interaction.update(paymentsPanel());
+    }
+
+    if (action === "coupons") {
+        return interaction.update(couponsPanel());
     }
 
     if (action === "config_toggle_hwidreset") {
@@ -584,12 +630,30 @@ async function handleModalSubmit(interaction) {
         return logAction(interaction, `definiu o preço do plano ${plan}: ${preco || "sem preço"}`);
     }
 
-    if (action === "ticket_category") {
-        const raw = get("categoria");
+    if (action === "ticket_channel") {
+        const raw = get("canal");
         const id = raw ? raw.replace(/[<#>]/g, "") : null;
-        SettingsStore.set("ticketCategoryId", id || null);
+        SettingsStore.set("ticketChannelId", id || null);
         await respondToPanel(interaction, paymentsPanel());
-        return logAction(interaction, `definiu a categoria dos tickets: ${id ? `<#${id}>` : "nenhuma"}`);
+        return logAction(interaction, `definiu o canal-base dos tickets: ${id ? `<#${id}>` : "usa o do /comprar"}`);
+    }
+
+    if (action === "coupon_generate") {
+        const codigo = get("codigo") || null;
+        const desconto = get("desconto") || "";
+        const usosRaw = get("usos");
+        const maxUses = usosRaw ? Number(usosRaw) : null;
+
+        const entry = CouponStore.create({ code: codigo, discountText: desconto, maxUses });
+        await respondToPanel(interaction, couponsPanel());
+        return logAction(interaction, `gerou o cupom \`${entry.code}\`${desconto ? ` (${desconto})` : ""}${maxUses ? ` — máx ${maxUses} usos` : " — usos ilimitados"}`);
+    }
+
+    if (action === "coupon_revoke") {
+        const codigo = get("codigo");
+        const ok = CouponStore.revoke(codigo);
+        await respondToPanel(interaction, couponsPanel());
+        return logAction(interaction, ok ? `revogou o cupom \`${codigo}\`` : `tentou revogar o cupom \`${codigo}\` (não encontrado)`);
     }
 
     if (action === "delete_all_keys") {

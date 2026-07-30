@@ -42,9 +42,12 @@ function createClient() {
                 return await adminPanel.handleModalSubmit(interaction);
             }
 
-            // Fluxo de compra (/comprar) usa customId "store:..."
+            // Fluxo de compra (/comprar) usa customId "store:..." / "store_modal:..."
             if (interaction.isButton() && interaction.customId.startsWith("store:")) {
                 return await storePanel.handleButton(interaction);
+            }
+            if (interaction.isModalSubmit() && interaction.customId.startsWith("store_modal:")) {
+                return await storePanel.handleModalSubmit(interaction);
             }
         } catch (err) {
             logger.error(`Erro ao processar interação -> ${err.stack || err}`);

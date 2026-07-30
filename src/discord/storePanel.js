@@ -3,17 +3,19 @@ const {
     ButtonBuilder,
     ButtonStyle,
     ChannelType,
-    PermissionFlagsBits
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle
 } = require("discord.js");
 const KeyStore = require("../store/keyStore");
 const SettingsStore = require("../store/settingsStore");
 const OrderStore = require("../store/orderStore");
+const CouponStore = require("../store/couponStore");
 const { isAdmin } = require("../utils/permissions");
 const { fmtDate } = require("../utils/format");
 const logger = require("../utils/logger");
 const { panel, v2Payload } = require("./v2");
 const { sendActionLog } = require("./logNotifier");
-const config = require("../config");
 
 const { PLAN_LABELS, PLAN_DAYS, PAYMENT_METHODS } = SettingsStore;
 
@@ -39,7 +41,7 @@ function shopPanel() {
     const container = panel({
         title: "🛒 Loja — 1NXITER HUB",
         description: `${description}\n\n**🛒 Compre aqui:**`,
-        footer: "Ao escolher um plano, um canal privado é criado só pra você e a administração."
+        footer: "Ao escolher um plano, um ticket privado é criado só pra você e a administração."
     });
     return v2Payload(container, [planButtonsRow()]);
 }
@@ -67,27 +69,64 @@ function closeRow(orderId) {
     );
 }
 
-async function createTicketChannel(guild, buyer) {
-    const categoryId = SettingsStore.get("ticketCategoryId");
-    const adminRoleId = config.adminRoleId;
+function couponModal(plan) {
+    return new ModalBuilder()
+        .setCustomId(`store_modal:buy:${plan}`)
+        .setTitle(`Comprar — ${PLAN_LABELS[plan]}`)
+        .addComponents(
+            new ActionRowBuilder().addComponents(
+                new TextInputBuilder()
+                    .setCustomId("cupom")
+                    .setLabel("Tem um cupom de desconto? (opcional)")
+                    .setStyle(TextInputStyle.Short)
+                    .setRequired(false)
+                    .setPlaceholder("deixe vazio se não tiver")
+            )
+        );
+}
 
-    const overwrites = [
-        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
-        { id: buyer.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] }
-    ];
-    if (adminRoleId) {
-        overwrites.push({ id: adminRoleId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] });
+/**
+ * Cria o ticket como THREAD, não canal — mais leve e não exige a
+ * permissão "Gerenciar Canais" pra sempre. Tenta thread PRIVADA primeiro
+ * (exige boost nível 2 no servidor); se o servidor não tiver boost
+ * suficiente, cai pra thread pública automaticamente (ainda funciona,
+ * só que fica visível pra quem também vê o canal-base).
+ */
+async function createTicketThread(interaction, buyer) {
+    const baseChannelId = SettingsStore.get("ticketChannelId");
+    const baseChannel = baseChannelId
+        ? await interaction.guild.channels.fetch(baseChannelId).catch(() => null)
+        : interaction.channel;
+
+    if (!baseChannel || !baseChannel.isTextBased()) {
+        throw new Error("Canal base pra criar o ticket não foi encontrado ou não é de texto — confere o 'Canal dos tickets' em /admin → Vendas/Loja.");
     }
 
     const safeName = buyer.username.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 20) || "comprador";
+    const threadName = `ticket-${safeName}-${Date.now().toString(36).slice(-4)}`;
 
-    return guild.channels.create({
-        name: `ticket-${safeName}`,
-        type: ChannelType.GuildText,
-        parent: categoryId || null,
-        permissionOverwrites: overwrites,
-        topic: `Compra de ${buyer.tag} (${buyer.id})`
-    });
+    let thread;
+    let isPrivate = true;
+    try {
+        thread = await baseChannel.threads.create({
+            name: threadName,
+            type: ChannelType.PrivateThread,
+            invitable: false,
+            reason: `Ticket de compra de ${buyer.tag}`
+        });
+    } catch {
+        // Provavelmente o servidor não tem boost nível 2 — thread privada
+        // exige isso. Cai pra pública, que funciona em qualquer servidor.
+        isPrivate = false;
+        thread = await baseChannel.threads.create({
+            name: threadName,
+            type: ChannelType.PublicThread,
+            reason: `Ticket de compra de ${buyer.tag}`
+        });
+    }
+
+    await thread.members.add(buyer.id).catch(() => {});
+    return { thread, isPrivate };
 }
 
 async function handleButton(interaction) {
@@ -101,41 +140,7 @@ async function handleButton(interaction) {
         if (!interaction.inGuild()) {
             return interaction.reply({ content: "❌ Isso só funciona dentro do servidor.", ephemeral: true });
         }
-
-        await interaction.deferReply({ ephemeral: true });
-
-        let channel;
-        try {
-            channel = await createTicketChannel(interaction.guild, interaction.user);
-        } catch (err) {
-            logger.error(`Falha ao criar canal de ticket -> ${err.message}`);
-            return interaction.editReply({ content: "❌ Não consegui criar o canal do ticket. Verifica se o bot tem permissão de 'Gerenciar Canais'." });
-        }
-
-        const order = OrderStore.create({ discordId: interaction.user.id, plan, channelId: channel.id });
-
-        const days = PLAN_DAYS[plan];
-        const ticketContainer = panel({
-            title: `🎫 Ticket de compra — ${PLAN_LABELS[plan]}`,
-            description:
-                `Olá <@${interaction.user.id}>! Aqui está seu ticket pra comprar o plano **${PLAN_LABELS[plan]}** por **${priceLine(plan)}**.\n\n` +
-                `Combine a forma de pagamento com a administração. Referência do que já está configurado:\n\n${paymentReferenceText()}`,
-            fields: [
-                { name: "Pedido", value: `\`${order.id}\`` },
-                { name: "Validade da key", value: days ? `${days} dia(s)` : "vitalícia (lifetime)" }
-            ],
-            footer: "Um admin confirma o pagamento aqui pra liberar a key."
-        });
-
-        await channel.send(v2Payload(ticketContainer, [ticketActionsRow(order.id)]));
-        await interaction.editReply({ content: `✅ Ticket criado: ${channel}` });
-
-        await sendActionLog(interaction.client, {
-            title: "🎫 Novo ticket de compra",
-            actorId: interaction.user.id,
-            description: `Pedido \`${order.id}\` — plano **${PLAN_LABELS[plan]}** — canal ${channel}.`
-        });
-        return;
+        return interaction.showModal(couponModal(plan));
     }
 
     if (action === "confirm" || action === "reject") {
@@ -237,4 +242,67 @@ async function handleButton(interaction) {
     }
 }
 
-module.exports = { shopPanel, handleButton };
+async function handleModalSubmit(interaction) {
+    const [, action, plan] = interaction.customId.split(":");
+    if (action !== "buy" || !PLAN_LABELS[plan]) return;
+
+    const codigoDigitado = interaction.fields.getTextInputValue("cupom")?.trim();
+    let coupon = null;
+
+    if (codigoDigitado) {
+        const result = CouponStore.use(codigoDigitado);
+        if (!result.ok) {
+            const reasons = {
+                not_found: "❌ Cupom não encontrado.",
+                inactive: "❌ Esse cupom foi desativado.",
+                exhausted: "❌ Esse cupom já atingiu o limite de usos."
+            };
+            return interaction.reply({ content: reasons[result.reason] || "❌ Cupom inválido.", ephemeral: true });
+        }
+        coupon = result.entry;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    let thread, isPrivate;
+    try {
+        ({ thread, isPrivate } = await createTicketThread(interaction, interaction.user));
+    } catch (err) {
+        logger.error(`Falha ao criar thread de ticket -> ${err.message}`);
+        return interaction.editReply({ content: `❌ Não consegui criar o ticket. ${err.message}` });
+    }
+
+    const order = OrderStore.create({
+        discordId: interaction.user.id,
+        plan,
+        channelId: thread.id,
+        couponCode: coupon?.code || null
+    });
+
+    const days = PLAN_DAYS[plan];
+    const ticketContainer = panel({
+        title: `🎫 Ticket de compra — ${PLAN_LABELS[plan]}`,
+        description:
+            `Olá <@${interaction.user.id}>! Aqui está seu ticket pra comprar o plano **${PLAN_LABELS[plan]}** por **${priceLine(plan)}**.\n\n` +
+            (coupon ? `**Cupom aplicado:** \`${coupon.code}\` — ${coupon.discountText || "desconto combinado com o admin"}\n\n` : "") +
+            `Combine a forma de pagamento com a administração. Referência do que já está configurado:\n\n${paymentReferenceText()}`,
+        fields: [
+            { name: "Pedido", value: `\`${order.id}\`` },
+            { name: "Validade da key", value: days ? `${days} dia(s)` : "vitalícia (lifetime)" }
+        ],
+        footer: isPrivate
+            ? "Um admin confirma o pagamento aqui pra liberar a key."
+            : "Um admin confirma o pagamento aqui pra liberar a key. (Thread pública — o servidor não tem boost nível 2 pra threads privadas.)"
+    });
+
+    await thread.send(v2Payload(ticketContainer, [ticketActionsRow(order.id)]));
+    await interaction.editReply({ content: `✅ Ticket criado: ${thread}` });
+
+    await sendActionLog(interaction.client, {
+        title: "🎫 Novo ticket de compra",
+        actorId: interaction.user.id,
+        description: `Pedido \`${order.id}\` — plano **${PLAN_LABELS[plan]}** — ${thread}${coupon ? ` — cupom \`${coupon.code}\`` : ""}.`
+    });
+}
+
+module.exports = { shopPanel, handleButton, handleModalSubmit };

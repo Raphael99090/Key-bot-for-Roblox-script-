@@ -1,62 +1,49 @@
 const crypto = require("crypto");
-const { paths } = require("../config");
-const { createJsonFile } = require("../utils/jsonFile");
-
-/**
- * Formato de cada pedido/ticket:
- * {
- *   id: "ORD-AB12CD34",
- *   discordId: "123...",         // quem comprou
- *   plan: "day"|"week"|"month"|"lifetime",
- *   channelId: "123...",          // canal privado (ticket) criado pra essa compra
- *   status: "open"|"confirmed"|"rejected",
- *   createdAt: 1710000000000,
- *   decidedAt: 1710000000000 | null,
- *   decidedBy: "discordId" | null,   // admin que confirmou/rejeitou
- *   generatedKey: "1NX-..." | null
- * }
- */
-
-const { readAll, writeAll } = createJsonFile(paths.orders, {});
+const db = require("../db");
 
 function generateId() {
     return `ORD-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
 }
 
+function rowToEntry(row) {
+    return row || null;
+}
+
+const stmts = {
+    insert: db.prepare(`INSERT INTO orders (id, discordId, plan, channelId, status, createdAt, decidedAt, decidedBy, generatedKey, couponCode) VALUES (?, ?, ?, ?, 'open', ?, NULL, NULL, NULL, ?)`),
+    get: db.prepare(`SELECT * FROM orders WHERE id = ?`),
+    getByChannel: db.prepare(`SELECT * FROM orders WHERE channelId = ?`),
+    all: db.prepare(`SELECT * FROM orders`),
+    decide: db.prepare(`UPDATE orders SET status = ?, generatedKey = ?, decidedAt = ?, decidedBy = ? WHERE id = ?`)
+};
+
+/**
+ * Formato de cada pedido/ticket:
+ * { id, discordId, plan, channelId, status, createdAt, decidedAt,
+ *   decidedBy, generatedKey, couponCode }
+ */
+
 const OrderStore = {
-    create({ discordId, plan, channelId }) {
-        const all = readAll();
+    create({ discordId, plan, channelId, couponCode = null }) {
         let id;
         do {
             id = generateId();
-        } while (all[id]);
+        } while (stmts.get.get(id));
 
-        all[id] = {
-            id,
-            discordId,
-            plan,
-            channelId,
-            status: "open",
-            createdAt: Date.now(),
-            decidedAt: null,
-            decidedBy: null,
-            generatedKey: null
-        };
-        writeAll(all);
-        return all[id];
+        stmts.insert.run(id, discordId, plan, channelId, Date.now(), couponCode);
+        return rowToEntry(stmts.get.get(id));
     },
 
     get(id) {
-        const all = readAll();
-        return all[id] || null;
+        return rowToEntry(stmts.get.get(id));
     },
 
     getByChannel(channelId) {
-        return this.list().find(o => o.channelId === channelId) || null;
+        return rowToEntry(stmts.getByChannel.get(channelId));
     },
 
     list() {
-        return Object.values(readAll());
+        return stmts.all.all().map(rowToEntry);
     },
 
     listOpen() {
@@ -64,30 +51,21 @@ const OrderStore = {
     },
 
     confirm(id, generatedKey, adminId) {
-        const all = readAll();
-        const entry = all[id];
+        const entry = rowToEntry(stmts.get.get(id));
         if (!entry) return { ok: false, reason: "not_found" };
         if (entry.status !== "open") return { ok: false, reason: "already_decided" };
 
-        entry.status = "confirmed";
-        entry.generatedKey = generatedKey;
-        entry.decidedAt = Date.now();
-        entry.decidedBy = adminId;
-        writeAll(all);
-        return { ok: true, entry };
+        stmts.decide.run("confirmed", generatedKey, Date.now(), adminId, id);
+        return { ok: true, entry: rowToEntry(stmts.get.get(id)) };
     },
 
     reject(id, adminId) {
-        const all = readAll();
-        const entry = all[id];
+        const entry = rowToEntry(stmts.get.get(id));
         if (!entry) return { ok: false, reason: "not_found" };
         if (entry.status !== "open") return { ok: false, reason: "already_decided" };
 
-        entry.status = "rejected";
-        entry.decidedAt = Date.now();
-        entry.decidedBy = adminId;
-        writeAll(all);
-        return { ok: true, entry };
+        stmts.decide.run("rejected", null, Date.now(), adminId, id);
+        return { ok: true, entry: rowToEntry(stmts.get.get(id)) };
     }
 };
 

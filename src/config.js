@@ -14,13 +14,7 @@ module.exports = {
     // Deixe vazio pra desativar a exigência (não recomendado em produção).
     apiSecret: process.env.API_SECRET || null,
 
-    // Onde os dados ficam salvos. Os arquivos são gerados
-    // automaticamente na primeira execução (não vêm no repo).
-    paths: {
-        keys: path.join(__dirname, "..", "data", "keys.json"),
-        settings: path.join(__dirname, "..", "data", "config.json"),
-        resetCodes: path.join(__dirname, "..", "data", "resetcodes.json"),
-        trials: path.join(__dirname, "..", "data", "trials.json"),
-        orders: path.join(__dirname, "..", "data", "orders.json")
-    }
+    // Onde o banco SQLite fica salvo. Gerado automaticamente na primeira
+    // execução (não vem no repo).
+    dbPath: path.join(__dirname, "..", "data", "bot.db")
 };
