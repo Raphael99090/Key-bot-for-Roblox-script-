@@ -5,6 +5,7 @@ const {
     ModalBuilder,
     TextInputBuilder,
     TextInputStyle,
+    StringSelectMenuBuilder,
     MessageFlags
 } = require("discord.js");
 const KeyStore = require("../store/keyStore");
@@ -125,18 +126,11 @@ function configPanel() {
 function paymentsPanel() {
     const s = SettingsStore.getAll();
     const preview = (text) => (text ? (text.length > 60 ? `${text.slice(0, 60)}…` : text) : "não configurado");
-    const { PLAN_LABELS } = SettingsStore;
 
     const container = panel({
-        title: "💳 Vendas / Loja",
-        description: "Configure os planos que aparecem em `/comprar` e as instruções de pagamento mostradas dentro de cada ticket.",
+        title: "💳 Vendas / Pagamentos",
+        description: "Instruções de pagamento mostradas como referência dentro de cada ticket. Configuração da loja (planos, imagem, descrição) e cupons ficam nos botões abaixo.",
         fields: [
-            { name: "Descrição da loja", value: preview(s.shopDescription) },
-            { name: `Plano ${PLAN_LABELS.day}`, value: preview(s.plans?.day) },
-            { name: `Plano ${PLAN_LABELS.week}`, value: preview(s.plans?.week) },
-            { name: `Plano ${PLAN_LABELS.month}`, value: preview(s.plans?.month) },
-            { name: `Plano ${PLAN_LABELS.lifetime}`, value: preview(s.plans?.lifetime) },
-            { name: "Canal-base dos tickets", value: s.ticketChannelId ? `<#${s.ticketChannelId}>` : "usa o canal onde /comprar foi digitado" },
             { name: "Pix", value: preview(s.paymentInfo?.pix) },
             { name: "Bitcoin", value: preview(s.paymentInfo?.btc) },
             { name: "Cartão", value: preview(s.paymentInfo?.card) },
@@ -145,29 +139,60 @@ function paymentsPanel() {
     });
 
     const row1 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("admin:shop_description").setLabel("Descrição da loja").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("admin:plan_day").setLabel(`Preço ${PLAN_LABELS.day}`).setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("admin:plan_week").setLabel(`Preço ${PLAN_LABELS.week}`).setStyle(ButtonStyle.Secondary)
-    );
-    const row2 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("admin:plan_month").setLabel(`Preço ${PLAN_LABELS.month}`).setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("admin:plan_lifetime").setLabel(`Preço ${PLAN_LABELS.lifetime}`).setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("admin:ticket_channel").setLabel("Canal-base dos tickets").setStyle(ButtonStyle.Secondary)
-    );
-    const row3 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:payment_pix").setLabel("Editar Pix").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("admin:payment_btc").setLabel("Editar Bitcoin").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("admin:payment_card").setLabel("Editar Cartão").setStyle(ButtonStyle.Secondary)
     );
-    const row4 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("admin:payment_local").setLabel("Editar Moeda Local").setStyle(ButtonStyle.Secondary),
+    const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("admin:payment_local").setLabel("Editar Moeda Local").setStyle(ButtonStyle.Secondary)
+    );
+    const row3 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("admin:shopconfig").setLabel("🛍️ Configurar Loja").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("admin:coupons").setLabel("🎟️ Cupons").setStyle(ButtonStyle.Success)
     );
-    const row5 = new ActionRowBuilder().addComponents(
+    const row4 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:back").setLabel("⬅️ Voltar").setStyle(ButtonStyle.Secondary)
     );
 
-    return v2Payload(container, [row1, row2, row3, row4, row5]);
+    return v2Payload(container, [row1, row2, row3, row4]);
+}
+
+/** Painel dedicado da loja: dropdown pra escolher qual plano editar, imagem, descrição, canal-base. */
+function shopConfigPanel() {
+    const s = SettingsStore.getAll();
+    const preview = (text) => (text ? (text.length > 60 ? `${text.slice(0, 60)}…` : text) : "não configurado");
+    const { PLAN_LABELS } = SettingsStore;
+
+    const container = panel({
+        title: "🛍️ Configurar Loja",
+        description: "Selecione um plano no menu abaixo pra editar o preço dele. Preview de como o `/comprar` está agora:",
+        imageUrl: s.shopImageUrl || null,
+        fields: [
+            { name: "Descrição", value: preview(s.shopDescription) },
+            { name: `Plano ${PLAN_LABELS.day}`, value: preview(s.plans?.day) },
+            { name: `Plano ${PLAN_LABELS.week}`, value: preview(s.plans?.week) },
+            { name: `Plano ${PLAN_LABELS.month}`, value: preview(s.plans?.month) },
+            { name: `Plano ${PLAN_LABELS.lifetime}`, value: preview(s.plans?.lifetime) },
+            { name: "Canal-base dos tickets", value: s.ticketChannelId ? `<#${s.ticketChannelId}>` : "usa o canal onde /comprar foi digitado" }
+        ]
+    });
+
+    const selectRow = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId("admin:shop_plan_select")
+            .setPlaceholder("Selecione um plano pra editar o preço")
+            .addOptions(Object.entries(PLAN_LABELS).map(([value, label]) => ({ label, value })))
+    );
+    const row1 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("admin:shop_description").setLabel("Descrição da loja").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("admin:shop_image").setLabel("🖼️ Imagem da loja").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("admin:ticket_channel").setLabel("Canal-base dos tickets").setStyle(ButtonStyle.Secondary)
+    );
+    const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("admin:payments").setLabel("⬅️ Voltar pra Vendas/Pagamentos").setStyle(ButtonStyle.Secondary)
+    );
+
+    return v2Payload(container, [selectRow, row1, row2]);
 }
 
 /** Painel de gestão de cupons. */
@@ -321,6 +346,9 @@ const MODALS = {
     shop_description: () => modal("admin_modal:shop_description", "Descrição da loja", [
         { id: "texto", label: "Texto que aparece no topo do /comprar", long: true, required: false }
     ]),
+    shop_image: () => modal("admin_modal:shop_image", "Imagem da loja", [
+        { id: "url", label: "URL da imagem (vazio = remover)", required: false, placeholder: "https://..." }
+    ]),
     plan_day: () => modal("admin_modal:plan_day", "Preço — 1 Dia", [
         { id: "preco", label: "Preço (texto livre, ex: R$ 5,00)", required: false }
     ]),
@@ -376,6 +404,10 @@ async function handleButton(interaction) {
 
     if (action === "payments") {
         return interaction.update(paymentsPanel());
+    }
+
+    if (action === "shopconfig") {
+        return interaction.update(shopConfigPanel());
     }
 
     if (action === "coupons") {
@@ -618,15 +650,22 @@ async function handleModalSubmit(interaction) {
     if (action === "shop_description") {
         const texto = get("texto") || "";
         SettingsStore.set("shopDescription", texto);
-        await respondToPanel(interaction, paymentsPanel());
+        await respondToPanel(interaction, shopConfigPanel());
         return logAction(interaction, "atualizou a descrição da loja");
+    }
+
+    if (action === "shop_image") {
+        const url = get("url") || "";
+        SettingsStore.set("shopImageUrl", url);
+        await respondToPanel(interaction, shopConfigPanel());
+        return logAction(interaction, url ? "definiu a imagem da loja" : "removeu a imagem da loja");
     }
 
     if (["plan_day", "plan_week", "plan_month", "plan_lifetime"].includes(action)) {
         const plan = action.replace("plan_", "");
         const preco = get("preco") || "";
         SettingsStore.setPlanPrice(plan, preco);
-        await respondToPanel(interaction, paymentsPanel());
+        await respondToPanel(interaction, shopConfigPanel());
         return logAction(interaction, `definiu o preço do plano ${plan}: ${preco || "sem preço"}`);
     }
 
@@ -634,7 +673,7 @@ async function handleModalSubmit(interaction) {
         const raw = get("canal");
         const id = raw ? raw.replace(/[<#>]/g, "") : null;
         SettingsStore.set("ticketChannelId", id || null);
-        await respondToPanel(interaction, paymentsPanel());
+        await respondToPanel(interaction, shopConfigPanel());
         return logAction(interaction, `definiu o canal-base dos tickets: ${id ? `<#${id}>` : "usa o do /comprar"}`);
     }
 
@@ -685,4 +724,19 @@ async function handleModalSubmit(interaction) {
     }
 }
 
-module.exports = { mainPanel, configPanel, handleButton, handleModalSubmit };
+async function handleSelectMenu(interaction) {
+    if (!isAdmin(interaction)) {
+        return interaction.reply({ content: "❌ Só admins podem usar esse painel.", ephemeral: true });
+    }
+
+    if (interaction.customId === "admin:shop_plan_select") {
+        const plan = interaction.values[0];
+        const key = `plan_${plan}`;
+        if (!MODALS[key]) {
+            return interaction.reply({ content: "❌ Plano inválido.", ephemeral: true });
+        }
+        return interaction.showModal(MODALS[key]());
+    }
+}
+
+module.exports = { mainPanel, configPanel, handleButton, handleModalSubmit, handleSelectMenu };

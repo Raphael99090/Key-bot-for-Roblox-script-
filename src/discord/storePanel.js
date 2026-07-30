@@ -41,6 +41,7 @@ function shopPanel() {
     const container = panel({
         title: "🛒 Loja — 1NXITER HUB",
         description: `${description}\n\n**🛒 Compre aqui:**`,
+        imageUrl: SettingsStore.get("shopImageUrl") || null,
         footer: "Ao escolher um plano, um ticket privado é criado só pra você e a administração."
     });
     return v2Payload(container, [planButtonsRow()]);

@@ -3,6 +3,8 @@ const {
     TextDisplayBuilder,
     SeparatorBuilder,
     SeparatorSpacingSize,
+    MediaGalleryBuilder,
+    MediaGalleryItemBuilder,
     MessageFlags
 } = require("discord.js");
 
@@ -18,9 +20,10 @@ function separator(spacing = SeparatorSpacingSize.Small, divider = true) {
  * Monta um "Container" (substituto do Embed em Components V2) a partir
  * de um título, uma descrição opcional, uma lista de "campos" (pares
  * nome/valor — V2 não tem field lado a lado como embed, então cada um
- * vira uma linha em negrito) e um rodapé opcional.
+ * vira uma linha em negrito), um rodapé opcional e uma imagem opcional
+ * (URL — mostrada como galeria de mídia dentro do próprio container).
  */
-function panel({ title, description = null, fields = [], color = 0x8a3ffc, footer = null }) {
+function panel({ title, description = null, fields = [], color = 0x8a3ffc, footer = null, imageUrl = null }) {
     const container = new ContainerBuilder().setAccentColor(color);
 
     container.addTextDisplayComponents(textDisplay(`### ${title}`));
@@ -28,6 +31,15 @@ function panel({ title, description = null, fields = [], color = 0x8a3ffc, foote
     if (description) {
         container.addSeparatorComponents(separator());
         container.addTextDisplayComponents(textDisplay(description));
+    }
+
+    if (imageUrl) {
+        container.addSeparatorComponents(separator());
+        container.addMediaGalleryComponents(
+            new MediaGalleryBuilder().addItems(
+                new MediaGalleryItemBuilder().setURL(imageUrl).setDescription(title)
+            )
+        );
     }
 
     if (fields.length > 0) {

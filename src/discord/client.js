@@ -41,6 +41,9 @@ function createClient() {
             if (interaction.isModalSubmit() && interaction.customId.startsWith("admin_modal:")) {
                 return await adminPanel.handleModalSubmit(interaction);
             }
+            if (interaction.isStringSelectMenu() && interaction.customId.startsWith("admin:")) {
+                return await adminPanel.handleSelectMenu(interaction);
+            }
 
             // Fluxo de compra (/comprar) usa customId "store:..." / "store_modal:..."
             if (interaction.isButton() && interaction.customId.startsWith("store:")) {

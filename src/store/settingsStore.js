@@ -17,6 +17,8 @@ const DEFAULTS = {
     ticketChannelId: null,
     // Texto configurável que aparece no topo da loja (/comprar).
     shopDescription: "",
+    // URL de imagem mostrada na loja (/comprar). Vazio = sem imagem.
+    shopImageUrl: "",
     // Preço mostrado em cada botão de plano. Texto livre (ex: "R$ 15,00").
     plans: {
         day: "",
