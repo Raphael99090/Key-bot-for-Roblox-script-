@@ -13,6 +13,10 @@ module.exports = {
     // Segredo exigido na API /validate (header X-API-Key ou ?secret=).
     // Deixe vazio pra desativar a exigência (não recomendado em produção).
     apiSecret: process.env.API_SECRET || null,
+    // Access Token do Mercado Pago (mercadopago.com.br/developers). Vazio =
+    // Pix automático fica desativado, e o fluxo cai pro botão manual de
+    // "Confirmar Pagamento" que já existia.
+    mercadoPagoAccessToken: process.env.MERCADOPAGO_ACCESS_TOKEN || null,
 
     // Onde o banco SQLite fica salvo. Gerado automaticamente na primeira
     // execução (não vem no repo).
