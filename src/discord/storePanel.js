@@ -5,7 +5,8 @@ const {
     ChannelType,
     ModalBuilder,
     TextInputBuilder,
-    TextInputStyle
+    TextInputStyle,
+    AttachmentBuilder
 } = require("discord.js");
 const KeyStore = require("../store/keyStore");
 const SettingsStore = require("../store/settingsStore");
@@ -16,6 +17,8 @@ const { fmtDate } = require("../utils/format");
 const logger = require("../utils/logger");
 const { panel, v2Payload } = require("./v2");
 const { sendActionLog } = require("./logNotifier");
+const mercadoPago = require("../payments/mercadoPago");
+const { sendSatisfactionSurvey } = require("./surveyPanel");
 
 const { PLAN_LABELS, PLAN_DAYS, PAYMENT_METHODS } = SettingsStore;
 
@@ -58,16 +61,100 @@ function paymentReferenceText() {
 }
 
 function ticketActionsRow(orderId) {
-    return new ActionRowBuilder().addComponents(
+    const buttons = [
         new ButtonBuilder().setCustomId(`store:confirm:${orderId}`).setLabel("✅ Confirmar Pagamento").setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(`store:reject:${orderId}`).setLabel("❌ Rejeitar").setStyle(ButtonStyle.Danger)
-    );
+    ];
+    if (mercadoPago.isConfigured()) {
+        buttons.unshift(
+            new ButtonBuilder().setCustomId(`store:autopix:${orderId}`).setLabel("💠 Gerar Pix Automático").setStyle(ButtonStyle.Primary)
+        );
+    }
+    return new ActionRowBuilder().addComponents(buttons);
 }
 
 function closeRow(orderId) {
     return new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`store:close:${orderId}`).setLabel("🔒 Fechar Ticket").setStyle(ButtonStyle.Secondary)
     );
+}
+
+/**
+ * Fecha (apaga) o canal do ticket. Se o pedido foi de fato confirmado
+ * (compra concluída), manda a pesquisa de satisfação pro comprador
+ * ANTES de apagar o canal — e só na DM, nunca no ticket/servidor.
+ */
+async function closeTicket(client, order, { delayMs = 0 } = {}) {
+    if (order.status === "confirmed") {
+        await sendSatisfactionSurvey(client, order);
+    }
+    const doClose = async () => {
+        const channel = await client.channels.fetch(order.channelId).catch(() => null);
+        await channel?.delete().catch(() => {});
+    };
+    if (delayMs > 0) {
+        setTimeout(doClose, delayMs);
+    } else {
+        await doClose();
+    }
+}
+
+function autopixModal(orderId) {
+    return new ModalBuilder()
+        .setCustomId(`store_modal:autopix:${orderId}`)
+        .setTitle("Gerar Pix automático")
+        .addComponents(
+            new ActionRowBuilder().addComponents(
+                new TextInputBuilder()
+                    .setCustomId("valor")
+                    .setLabel("Valor a cobrar (ex: 15.90)")
+                    .setStyle(TextInputStyle.Short)
+                    .setRequired(true)
+                    .setPlaceholder("15.90")
+            )
+        );
+}
+
+/**
+ * Gera a key, vincula ao comprador, marca o pedido como confirmado e
+ * manda a key por DM. Usado tanto pelo clique manual em "Confirmar
+ * Pagamento" quanto pela aprovação automática do Pix — os dois
+ * caminhos terminam aqui pra não duplicar a lógica.
+ */
+async function finalizeOrder(client, order, adminId) {
+    const days = PLAN_DAYS[order.plan];
+    const keyEntry = KeyStore.create({ daysValid: days, note: `venda (${order.plan}) - pedido ${order.id}` });
+    KeyStore.redeem(keyEntry.key, order.discordId);
+
+    const result = OrderStore.confirm(order.id, keyEntry.key, adminId);
+    if (!result.ok) return { ok: false, reason: result.reason };
+
+    let dmOk = true;
+    try {
+        const buyer = await client.users.fetch(order.discordId);
+        const dmContainer = panel({
+            title: "🔑 Sua key chegou!",
+            color: 0x2ecc71,
+            description:
+                `Pagamento confirmado — aqui está sua key:\n\n\`${keyEntry.key}\`\n\n` +
+                `**Vence em:** ${fmtDate(keyEntry.expiresAt)}\n\n` +
+                `**Como usar:** dentro do jogo, digite \`/key redeem key:${keyEntry.key}\` aqui no Discord ` +
+                `pra vincular ela na sua conta, depois cole a key na tela do hub quando ele carregar.`
+        });
+        await buyer.send(v2Payload(dmContainer, []));
+    } catch {
+        dmOk = false;
+    }
+
+    logger.action(adminId, `confirmou o pedido ${order.id} e gerou a key ${keyEntry.key} pra <@${order.discordId}>`);
+    await sendActionLog(client, {
+        title: "🛒 Pedido confirmado",
+        actorId: adminId,
+        color: 0x2ecc71,
+        description: `Pedido \`${order.id}\` (${PLAN_LABELS[order.plan]}) — key \`${keyEntry.key}\` gerada pra <@${order.discordId}>. Vencimento: ${fmtDate(keyEntry.expiresAt)}.`
+    });
+
+    return { ok: true, keyEntry, dmOk };
 }
 
 function couponModal(plan) {
@@ -141,7 +228,28 @@ async function handleButton(interaction) {
         if (!interaction.inGuild()) {
             return interaction.reply({ content: "❌ Isso só funciona dentro do servidor.", ephemeral: true });
         }
+
+        // Rate limit: só 1 ticket aberto por vez por pessoa, pra ninguém
+        // ficar clicando nos 4 planos e empilhando threads vazias.
+        const existing = OrderStore.listOpen().find(o => o.discordId === interaction.user.id);
+        if (existing) {
+            return interaction.reply({
+                content: `❌ Você já tem um ticket aberto: <#${existing.channelId}>. Finaliza ou espera ele fechar antes de abrir outro.`,
+                ephemeral: true
+            });
+        }
+
         return interaction.showModal(couponModal(plan));
+    }
+
+    if (action === "autopix") {
+        if (!isAdmin(interaction)) {
+            return interaction.reply({ content: "❌ Só admins podem gerar o Pix.", ephemeral: true });
+        }
+        if (!OrderStore.get(param)) {
+            return interaction.reply({ content: "❌ Pedido não encontrado.", ephemeral: true });
+        }
+        return interaction.showModal(autopixModal(param));
     }
 
     if (action === "confirm" || action === "reject") {
@@ -156,30 +264,9 @@ async function handleButton(interaction) {
         }
 
         if (action === "confirm") {
-            const days = PLAN_DAYS[order.plan];
-            const keyEntry = KeyStore.create({ daysValid: days, note: `venda (${order.plan}) - pedido ${order.id}` });
-            KeyStore.redeem(keyEntry.key, order.discordId);
-
-            const result = OrderStore.confirm(order.id, keyEntry.key, interaction.user.id);
+            const result = await finalizeOrder(interaction.client, order, interaction.user.id);
             if (!result.ok) {
                 return interaction.reply({ content: "⚠️ Esse pedido já tinha sido decidido antes.", ephemeral: true });
-            }
-
-            let dmOk = true;
-            try {
-                const buyer = await interaction.client.users.fetch(order.discordId);
-                const dmContainer = panel({
-                    title: "🔑 Sua key chegou!",
-                    color: 0x2ecc71,
-                    description:
-                        `Pagamento confirmado — aqui está sua key:\n\n\`${keyEntry.key}\`\n\n` +
-                        `**Vence em:** ${fmtDate(keyEntry.expiresAt)}\n\n` +
-                        `**Como usar:** dentro do jogo, digite \`/key redeem key:${keyEntry.key}\` aqui no Discord ` +
-                        `pra vincular ela na sua conta, depois cole a key na tela do hub quando ele carregar.`
-                });
-                await buyer.send(v2Payload(dmContainer, []));
-            } catch {
-                dmOk = false;
             }
 
             const doneContainer = panel({
@@ -187,20 +274,13 @@ async function handleButton(interaction) {
                 color: 0x2ecc71,
                 fields: [
                     { name: "Pedido", value: `\`${order.id}\`` },
-                    { name: "Key gerada", value: `\`${keyEntry.key}\`` },
-                    { name: "Vencimento", value: fmtDate(keyEntry.expiresAt) },
-                    { name: "DM enviada?", value: dmOk ? "sim" : "❌ falhou (DMs fechadas?) — a key já está escrita aqui em cima" }
+                    { name: "Key gerada", value: `\`${result.keyEntry.key}\`` },
+                    { name: "Vencimento", value: fmtDate(result.keyEntry.expiresAt) },
+                    { name: "DM enviada?", value: result.dmOk ? "sim" : "❌ falhou (DMs fechadas?) — a key já está escrita aqui em cima" }
                 ]
             });
             await interaction.update(v2Payload(doneContainer, [closeRow(order.id)]));
-
-            logger.action(interaction.user.id, `confirmou o pedido ${order.id} e gerou a key ${keyEntry.key} pra <@${order.discordId}>`);
-            await sendActionLog(interaction.client, {
-                title: "🛒 Pedido confirmado",
-                actorId: interaction.user.id,
-                color: 0x2ecc71,
-                description: `Pedido \`${order.id}\` (${PLAN_LABELS[order.plan]}) — key \`${keyEntry.key}\` gerada pra <@${order.discordId}>. Vencimento: ${fmtDate(keyEntry.expiresAt)}.`
-            });
+            await closeTicket(interaction.client, OrderStore.get(order.id), { delayMs: 10000 });
             return;
         }
 
@@ -236,15 +316,23 @@ async function handleButton(interaction) {
         }
 
         await interaction.reply({ content: "🔒 Fechando o ticket em 5 segundos...", ephemeral: false });
-        setTimeout(() => {
-            interaction.channel?.delete().catch(() => {});
-        }, 5000);
+        if (order) {
+            await closeTicket(interaction.client, order, { delayMs: 5000 });
+        } else {
+            setTimeout(() => interaction.channel?.delete().catch(() => {}), 5000);
+        }
         return;
     }
 }
 
 async function handleModalSubmit(interaction) {
-    const [, action, plan] = interaction.customId.split(":");
+    const [, action, param] = interaction.customId.split(":");
+
+    if (action === "autopix") {
+        return handleAutopixSubmit(interaction, param);
+    }
+
+    const plan = param;
     if (action !== "buy" || !PLAN_LABELS[plan]) return;
 
     const codigoDigitado = interaction.fields.getTextInputValue("cupom")?.trim();
@@ -304,6 +392,104 @@ async function handleModalSubmit(interaction) {
         actorId: interaction.user.id,
         description: `Pedido \`${order.id}\` — plano **${PLAN_LABELS[plan]}** — ${thread}${coupon ? ` — cupom \`${coupon.code}\`` : ""}.`
     });
+}
+
+const PIX_POLL_INTERVAL_MS = 5000;
+const PIX_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutos
+
+/**
+ * Gera a cobrança Pix via Mercado Pago, posta o QR Code + copia-e-cola
+ * no ticket, e fica checando o status a cada 5s. Quando aprovar, chama
+ * o mesmo finalizeOrder() que o botão manual usa — ninguém precisa
+ * clicar em nada.
+ */
+async function handleAutopixSubmit(interaction, orderId) {
+    const order = OrderStore.get(orderId);
+    if (!order) {
+        return interaction.reply({ content: "❌ Pedido não encontrado.", ephemeral: true });
+    }
+
+    const valorTexto = interaction.fields.getTextInputValue("valor")?.trim().replace(",", ".");
+    const valor = Number(valorTexto);
+    if (!valor || valor <= 0) {
+        return interaction.reply({ content: "❌ Valor inválido. Usa só números, ex: 15.90", ephemeral: true });
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    let charge;
+    try {
+        charge = await mercadoPago.createPixCharge({
+            amount: valor,
+            description: `1NXITER HUB — ${PLAN_LABELS[order.plan]} — pedido ${order.id}`
+        });
+    } catch (err) {
+        logger.error(`Falha ao gerar Pix -> ${err.message}`);
+        return interaction.editReply({ content: `❌ Não consegui gerar o Pix. ${err.message}` });
+    }
+
+    await interaction.editReply({ content: "✅ Pix gerado — postado no ticket." });
+
+    const channel = await interaction.client.channels.fetch(order.channelId).catch(() => null);
+    if (!channel) return;
+
+    const attachment = new AttachmentBuilder(Buffer.from(charge.qrCodeBase64, "base64"), { name: "pix.png" });
+    const pixContainer = panel({
+        title: "💠 Pix gerado",
+        color: 0x00b0f0,
+        description:
+            `Valor: **R$ ${valor.toFixed(2)}**\n\n` +
+            `Escaneia o QR Code acima ou copia o código abaixo no app do seu banco:\n\n` +
+            `\`\`\`${charge.qrCodeText}\`\`\`\n\n` +
+            `Assim que o pagamento cair, a key é liberada automaticamente — não precisa avisar ninguém.`,
+        footer: "Esse Pix expira em 15 minutos se não for pago."
+    });
+
+    await channel.send({ files: [attachment], ...v2Payload(pixContainer, []) });
+
+    let elapsed = 0;
+    const poll = setInterval(async () => {
+        elapsed += PIX_POLL_INTERVAL_MS;
+
+        if (elapsed >= PIX_TIMEOUT_MS) {
+            clearInterval(poll);
+            await channel.send("⏳ O Pix gerado expirou sem confirmação. Gera um novo com **💠 Gerar Pix Automático** se ainda quiser pagar assim.").catch(() => {});
+            return;
+        }
+
+        // Se o pedido já foi decidido por outro caminho (confirm manual,
+        // reject, ou outro Pix gerado antes), para de checar esse aqui.
+        const current = OrderStore.get(order.id);
+        if (!current || current.status !== "open") {
+            clearInterval(poll);
+            return;
+        }
+
+        const status = await mercadoPago.checkPaymentStatus(charge.id);
+        if (status === "approved") {
+            clearInterval(poll);
+
+            const result = await finalizeOrder(interaction.client, order, interaction.client.user.id);
+            if (!result.ok) return;
+
+            const doneContainer = panel({
+                title: "✅ Pagamento aprovado automaticamente",
+                color: 0x2ecc71,
+                fields: [
+                    { name: "Pedido", value: `\`${order.id}\`` },
+                    { name: "Key gerada", value: `\`${result.keyEntry.key}\`` },
+                    { name: "Vencimento", value: fmtDate(result.keyEntry.expiresAt) },
+                    { name: "DM enviada?", value: result.dmOk ? "sim" : "❌ falhou (DMs fechadas?) — a key já está escrita aqui em cima" }
+                ]
+            });
+            await channel.send(v2Payload(doneContainer, [closeRow(order.id)])).catch(() => {});
+            await closeTicket(interaction.client, OrderStore.get(order.id), { delayMs: 10000 });
+        } else if (status === "rejected" || status === "cancelled") {
+            clearInterval(poll);
+            await channel.send("❌ O Pix foi rejeitado/cancelado. Gera um novo se quiser tentar de novo.").catch(() => {});
+        }
+        // "pending" só continua esperando, sem spamar o ticket.
+    }, PIX_POLL_INTERVAL_MS);
 }
 
 module.exports = { shopPanel, handleButton, handleModalSubmit };

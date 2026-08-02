@@ -10,17 +10,18 @@ function rowToEntry(row) {
 }
 
 const stmts = {
-    insert: db.prepare(`INSERT INTO orders (id, discordId, plan, channelId, status, createdAt, decidedAt, decidedBy, generatedKey, couponCode) VALUES (?, ?, ?, ?, 'open', ?, NULL, NULL, NULL, ?)`),
+    insert: db.prepare(`INSERT INTO orders (id, discordId, plan, channelId, status, createdAt, decidedAt, decidedBy, generatedKey, couponCode, lastActivityAt) VALUES (?, ?, ?, ?, 'open', ?, NULL, NULL, NULL, ?, ?)`),
     get: db.prepare(`SELECT * FROM orders WHERE id = ?`),
     getByChannel: db.prepare(`SELECT * FROM orders WHERE channelId = ?`),
     all: db.prepare(`SELECT * FROM orders`),
-    decide: db.prepare(`UPDATE orders SET status = ?, generatedKey = ?, decidedAt = ?, decidedBy = ? WHERE id = ?`)
+    decide: db.prepare(`UPDATE orders SET status = ?, generatedKey = ?, decidedAt = ?, decidedBy = ? WHERE id = ?`),
+    touch: db.prepare(`UPDATE orders SET lastActivityAt = ? WHERE id = ?`)
 };
 
 /**
  * Formato de cada pedido/ticket:
  * { id, discordId, plan, channelId, status, createdAt, decidedAt,
- *   decidedBy, generatedKey, couponCode }
+ *   decidedBy, generatedKey, couponCode, lastActivityAt }
  */
 
 const OrderStore = {
@@ -30,7 +31,8 @@ const OrderStore = {
             id = generateId();
         } while (stmts.get.get(id));
 
-        stmts.insert.run(id, discordId, plan, channelId, Date.now(), couponCode);
+        const now = Date.now();
+        stmts.insert.run(id, discordId, plan, channelId, now, couponCode, now);
         return rowToEntry(stmts.get.get(id));
     },
 
@@ -50,6 +52,11 @@ const OrderStore = {
         return this.list().filter(o => o.status === "open");
     },
 
+    /** Marca que teve mensagem nova no ticket — usado pra saber se ficou inativo. */
+    touchActivity(id) {
+        stmts.touch.run(Date.now(), id);
+    },
+
     confirm(id, generatedKey, adminId) {
         const entry = rowToEntry(stmts.get.get(id));
         if (!entry) return { ok: false, reason: "not_found" };
@@ -65,6 +72,16 @@ const OrderStore = {
         if (entry.status !== "open") return { ok: false, reason: "already_decided" };
 
         stmts.decide.run("rejected", null, Date.now(), adminId, id);
+        return { ok: true, entry: rowToEntry(stmts.get.get(id)) };
+    },
+
+    /** Fechado sozinho por inatividade — não é rejeição nem confirmação. */
+    expire(id) {
+        const entry = rowToEntry(stmts.get.get(id));
+        if (!entry) return { ok: false, reason: "not_found" };
+        if (entry.status !== "open") return { ok: false, reason: "already_decided" };
+
+        stmts.decide.run("expired", null, Date.now(), null, id);
         return { ok: true, entry: rowToEntry(stmts.get.get(id)) };
     }
 };

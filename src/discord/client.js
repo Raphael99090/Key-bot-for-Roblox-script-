@@ -5,9 +5,15 @@ const config = require("../config");
 const logger = require("../utils/logger");
 const adminPanel = require("./adminPanel");
 const storePanel = require("./storePanel");
+const surveyPanel = require("./surveyPanel");
+const OrderStore = require("../store/orderStore");
+const { startTicketSweeper } = require("./ticketSweeper");
 
 function createClient() {
-    const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+    // GuildMessages só pra saber QUE uma mensagem chegou (marcar
+    // atividade do ticket) — não lê o conteúdo, então não precisa da
+    // intent privilegiada de MessageContent.
+    const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
     client.commands = new Collection();
 
     // Carrega todo arquivo dentro de commands/ automaticamente —
@@ -52,6 +58,14 @@ function createClient() {
             if (interaction.isModalSubmit() && interaction.customId.startsWith("store_modal:")) {
                 return await storePanel.handleModalSubmit(interaction);
             }
+
+            // Pesquisa de satisfação (só acontece na DM) usa "survey:..." / "survey_modal:..."
+            if (interaction.isButton() && interaction.customId.startsWith("survey:")) {
+                return await surveyPanel.handleButton(interaction);
+            }
+            if (interaction.isModalSubmit() && interaction.customId.startsWith("survey_modal:")) {
+                return await surveyPanel.handleModalSubmit(interaction);
+            }
         } catch (err) {
             logger.error(`Erro ao processar interação -> ${err.stack || err}`);
             const payload = { content: "❌ Ocorreu um erro ao processar isso.", ephemeral: true };
@@ -63,8 +77,21 @@ function createClient() {
         }
     });
 
+    // Marca atividade no ticket sempre que alguém manda mensagem nele —
+    // o sweeper usa isso pra saber se o ticket ficou "morto" (3min quieto).
+    client.on("messageCreate", (message) => {
+        if (message.author.bot) return;
+        if (!message.channel.isThread?.()) return;
+
+        const order = OrderStore.getByChannel(message.channel.id);
+        if (order && order.status === "open") {
+            OrderStore.touchActivity(order.id);
+        }
+    });
+
     client.once("ready", () => {
         logger.ok(`Bot conectado como ${client.user.tag}`);
+        startTicketSweeper(client);
     });
 
     return client;

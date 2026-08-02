@@ -61,6 +61,24 @@ db.exec(`
         active INTEGER NOT NULL DEFAULT 1,
         createdAt INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS reviews (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        orderId TEXT NOT NULL,
+        discordId TEXT NOT NULL,
+        stars INTEGER NOT NULL,
+        comment TEXT NOT NULL DEFAULT '',
+        createdAt INTEGER NOT NULL
+    );
 `);
+
+// ALTER TABLE ADD COLUMN falha se a coluna já existir — como a tabela
+// orders já existia antes dessa coluna ser criada, protege com try/catch
+// em vez de exigir apagar o banco de quem já tinha dados.
+try {
+    db.exec(`ALTER TABLE orders ADD COLUMN lastActivityAt INTEGER`);
+} catch {
+    // coluna já existe, segue o jogo
+}
 
 module.exports = db;
