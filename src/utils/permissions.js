@@ -1,18 +1,10 @@
-const { PermissionFlagsBits } = require("discord.js");
-const { adminRoleId } = require("../config");
+const config = require("../config");
 
-/**
- * Considera admin quem tiver permissão de Administrator no servidor,
- * OU o cargo configurado em ADMIN_ROLE_ID (.env).
- */
+/** True se a pessoa tem Administrator no servidor OU o cargo configurado em ADMIN_ROLE_ID. */
 function isAdmin(interaction) {
     if (!interaction.inGuild()) return false;
-
-    const member = interaction.member;
-    if (member.permissions?.has(PermissionFlagsBits.Administrator)) return true;
-
-    if (adminRoleId && member.roles?.cache?.has(adminRoleId)) return true;
-
+    if (interaction.member.permissions.has("Administrator")) return true;
+    if (config.adminRoleId && interaction.member.roles.cache.has(config.adminRoleId)) return true;
     return false;
 }
 
