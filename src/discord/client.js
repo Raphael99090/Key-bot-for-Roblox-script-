@@ -8,6 +8,7 @@ const storePanel = require("./storePanel");
 const surveyPanel = require("./surveyPanel");
 const OrderStore = require("../store/orderStore");
 const { startTicketSweeper } = require("./ticketSweeper");
+const { startRenewalReminder } = require("./renewalReminder");
 
 function createClient() {
     // GuildMessages só pra saber QUE uma mensagem chegou (marcar
@@ -92,6 +93,7 @@ function createClient() {
     client.once("ready", () => {
         logger.ok(`Bot conectado como ${client.user.tag}`);
         startTicketSweeper(client);
+        startRenewalReminder(client);
     });
 
     return client;

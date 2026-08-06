@@ -1,5 +1,6 @@
 const OrderStore = require("../store/orderStore");
 const logger = require("../utils/logger");
+const { postTicketTranscript } = require("./transcript");
 
 const INACTIVITY_MS = 3 * 60 * 1000; // 3 minutos
 const SWEEP_INTERVAL_MS = 30 * 1000; // confere a cada 30s
@@ -18,6 +19,7 @@ async function sweepOnce(client) {
         try {
             const channel = await client.channels.fetch(order.channelId).catch(() => null);
             if (channel) {
+                await postTicketTranscript(client, result.entry, channel);
                 await channel.send("🔒 Ticket fechado automaticamente por inatividade (3 minutos sem mensagens).").catch(() => {});
                 setTimeout(() => channel.delete().catch(() => {}), 5000);
             }

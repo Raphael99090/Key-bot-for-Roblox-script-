@@ -6,7 +6,8 @@ const {
     ModalBuilder,
     TextInputBuilder,
     TextInputStyle,
-    AttachmentBuilder
+    AttachmentBuilder,
+    MessageFlags
 } = require("discord.js");
 const KeyStore = require("../store/keyStore");
 const SettingsStore = require("../store/settingsStore");
@@ -19,6 +20,8 @@ const { panel, v2Payload } = require("./v2");
 const { sendActionLog } = require("./logNotifier");
 const mercadoPago = require("../payments/mercadoPago");
 const { sendSatisfactionSurvey } = require("./surveyPanel");
+const { postTicketTranscript } = require("./transcript");
+const ReviewStore = require("../store/reviewStore");
 
 const { PLAN_LABELS, PLAN_DAYS, PAYMENT_METHODS } = SettingsStore;
 
@@ -41,9 +44,15 @@ function planButtonsRow() {
 /** Painel público/pessoal da loja — os 4 planos com preço já no botão. */
 function shopPanel() {
     const description = SettingsStore.get("shopDescription") || "Escolha um plano abaixo pra comprar sua key.";
+    const reviews = ReviewStore.list();
+    const avg = ReviewStore.averageStars();
+    const starsLine = avg !== null
+        ? `\n\n⭐ **${avg.toFixed(1)}/5** — baseado em ${reviews.length} avalia${reviews.length === 1 ? "ção" : "ções"}`
+        : "";
+
     const container = panel({
         title: "🛒 Loja — 1NXITER HUB",
-        description: `${description}\n\n**🛒 Compre aqui:**`,
+        description: `${description}${starsLine}\n\n**🛒 Compre aqui:**`,
         imageUrl: SettingsStore.get("shopImageUrl") || null,
         footer: "Ao escolher um plano, um ticket privado é criado só pra você e a administração."
     });
@@ -90,6 +99,7 @@ async function closeTicket(client, order, { delayMs = 0 } = {}) {
     }
     const doClose = async () => {
         const channel = await client.channels.fetch(order.channelId).catch(() => null);
+        await postTicketTranscript(client, order, channel);
         await channel?.delete().catch(() => {});
     };
     if (delayMs > 0) {
@@ -121,12 +131,12 @@ function autopixModal(orderId) {
  * Pagamento" quanto pela aprovação automática do Pix — os dois
  * caminhos terminam aqui pra não duplicar a lógica.
  */
-async function finalizeOrder(client, order, adminId) {
+async function finalizeOrder(client, order, adminId, amountPaid = null) {
     const days = PLAN_DAYS[order.plan];
     const keyEntry = KeyStore.create({ daysValid: days, note: `venda (${order.plan}) - pedido ${order.id}` });
     KeyStore.redeem(keyEntry.key, order.discordId);
 
-    const result = OrderStore.confirm(order.id, keyEntry.key, adminId);
+    const result = OrderStore.confirm(order.id, keyEntry.key, adminId, amountPaid);
     if (!result.ok) return { ok: false, reason: result.reason };
 
     let dmOk = true;
@@ -174,6 +184,31 @@ function couponModal(plan) {
 }
 
 /**
+ * Painel de termos de uso — o comprador precisa clicar "Aceito" aqui
+ * antes do ticket ser criado de verdade. O cupom só é CONSUMIDO
+ * (incrementa o contador de uso) depois do aceite, não na hora que foi
+ * digitado — assim, se a pessoa cancelar, o cupom continua intacto.
+ */
+function termsPanel(plan, couponCode) {
+    const terms = SettingsStore.get("termsText") || "Sem termos configurados.";
+    const container = panel({
+        title: "📜 Termos de Uso",
+        description:
+            `${terms}\n\n` +
+            `**Plano:** ${PLAN_LABELS[plan]} — ${priceLine(plan)}` +
+            (couponCode ? `\n**Cupom:** \`${couponCode}\`` : ""),
+        footer: "Clique em \"Aceito\" pra continuar e abrir seu ticket."
+    });
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`store:accept_terms:${plan}:${couponCode || "none"}`).setLabel("✅ Aceito, continuar").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("store:cancel_terms").setLabel("❌ Cancelar").setStyle(ButtonStyle.Secondary)
+    );
+
+    return v2Payload(container, [row]);
+}
+
+/**
  * Cria o ticket como THREAD, não canal — mais leve e não exige a
  * permissão "Gerenciar Canais" pra sempre. Tenta thread PRIVADA primeiro
  * (exige boost nível 2 no servidor); se o servidor não tiver boost
@@ -217,8 +252,66 @@ async function createTicketThread(interaction, buyer) {
     return { thread, isPrivate };
 }
 
+/**
+ * Cria o ticket de fato — só é chamada DEPOIS de aceitar os termos de
+ * uso (botão "accept_terms"). O cupom só é consumido aqui, não na hora
+ * que a pessoa digitou (senão cancelar a compra desperdiçaria o cupom).
+ */
+async function createTicketAndNotify(interaction, plan, couponCode) {
+    let coupon = null;
+    if (couponCode && couponCode !== "none") {
+        const result = CouponStore.use(couponCode);
+        if (result.ok) coupon = result.entry;
+        // Se falhar aqui (ex: alguém mais usou o mesmo cupom nesse meio-tempo,
+        // raríssimo), só segue sem cupom em vez de travar a compra da pessoa.
+    }
+
+    let thread, isPrivate;
+    try {
+        ({ thread, isPrivate } = await createTicketThread(interaction, interaction.user));
+    } catch (err) {
+        logger.error(`Falha ao criar thread de ticket -> ${err.message}`);
+        const errContainer = panel({ title: "❌ Erro ao criar o ticket", description: err.message });
+        return interaction.editReply(v2Payload(errContainer, []));
+    }
+
+    const order = OrderStore.create({
+        discordId: interaction.user.id,
+        plan,
+        channelId: thread.id,
+        couponCode: coupon?.code || null
+    });
+
+    const days = PLAN_DAYS[plan];
+    const ticketContainer = panel({
+        title: `🎫 Ticket de compra — ${PLAN_LABELS[plan]}`,
+        description:
+            `Olá <@${interaction.user.id}>! Aqui está seu ticket pra comprar o plano **${PLAN_LABELS[plan]}** por **${priceLine(plan)}**.\n\n` +
+            (coupon ? `**Cupom aplicado:** \`${coupon.code}\` — ${coupon.discountText || "desconto combinado com o admin"}\n\n` : "") +
+            `Combine a forma de pagamento com a administração. Referência do que já está configurado:\n\n${paymentReferenceText()}`,
+        fields: [
+            { name: "Pedido", value: `\`${order.id}\`` },
+            { name: "Validade da key", value: days ? `${days} dia(s)` : "vitalícia (lifetime)" }
+        ],
+        footer: isPrivate
+            ? "Um admin confirma o pagamento aqui pra liberar a key."
+            : "Um admin confirma o pagamento aqui pra liberar a key. (Thread pública — o servidor não tem boost nível 2 pra threads privadas.)"
+    });
+
+    await thread.send(v2Payload(ticketContainer, [ticketActionsRow(order.id)]));
+
+    const doneContainer = panel({ title: "✅ Ticket criado", description: `Seu ticket foi criado: ${thread}` });
+    await interaction.editReply(v2Payload(doneContainer, []));
+
+    await sendActionLog(interaction.client, {
+        title: "🎫 Novo ticket de compra",
+        actorId: interaction.user.id,
+        description: `Pedido \`${order.id}\` — plano **${PLAN_LABELS[plan]}** — ${thread}${coupon ? ` — cupom \`${coupon.code}\`` : ""}.`
+    });
+}
+
 async function handleButton(interaction) {
-    const [, action, param] = interaction.customId.split(":");
+    const [, action, param, param2] = interaction.customId.split(":");
 
     if (action === "buy") {
         const plan = param;
@@ -240,6 +333,31 @@ async function handleButton(interaction) {
         }
 
         return interaction.showModal(couponModal(plan));
+    }
+
+    if (action === "accept_terms") {
+        const plan = param;
+        const couponCode = param2;
+        if (!PLAN_LABELS[plan]) {
+            return interaction.reply({ content: "❌ Plano inválido.", ephemeral: true });
+        }
+
+        // Confirma o rate limit de novo aqui (pode ter passado tempo entre
+        // abrir os termos e clicar em Aceito, e a pessoa pode ter aberto
+        // outro ticket nesse meio-tempo por outro caminho).
+        const existing = OrderStore.listOpen().find(o => o.discordId === interaction.user.id);
+        if (existing) {
+            const container = panel({ title: "❌ Você já tem um ticket aberto", description: `<#${existing.channelId}>` });
+            return interaction.update(v2Payload(container, []));
+        }
+
+        await interaction.deferUpdate();
+        return createTicketAndNotify(interaction, plan, couponCode);
+    }
+
+    if (action === "cancel_terms") {
+        const container = panel({ title: "❌ Compra cancelada", description: "Nenhum ticket foi criado. Pode chamar `/comprar` de novo quando quiser." });
+        return interaction.update(v2Payload(container, []));
     }
 
     if (action === "autopix") {
@@ -336,10 +454,12 @@ async function handleModalSubmit(interaction) {
     if (action !== "buy" || !PLAN_LABELS[plan]) return;
 
     const codigoDigitado = interaction.fields.getTextInputValue("cupom")?.trim();
-    let coupon = null;
+    let couponCode = null;
 
     if (codigoDigitado) {
-        const result = CouponStore.use(codigoDigitado);
+        // Só valida aqui — NÃO consome o cupom ainda. Se a pessoa cancelar
+        // nos termos de uso, o cupom continua intacto pra tentar de novo.
+        const result = CouponStore.validate(codigoDigitado);
         if (!result.ok) {
             const reasons = {
                 not_found: "❌ Cupom não encontrado.",
@@ -348,50 +468,11 @@ async function handleModalSubmit(interaction) {
             };
             return interaction.reply({ content: reasons[result.reason] || "❌ Cupom inválido.", ephemeral: true });
         }
-        coupon = result.entry;
+        couponCode = result.entry.code;
     }
 
-    await interaction.deferReply({ ephemeral: true });
-
-    let thread, isPrivate;
-    try {
-        ({ thread, isPrivate } = await createTicketThread(interaction, interaction.user));
-    } catch (err) {
-        logger.error(`Falha ao criar thread de ticket -> ${err.message}`);
-        return interaction.editReply({ content: `❌ Não consegui criar o ticket. ${err.message}` });
-    }
-
-    const order = OrderStore.create({
-        discordId: interaction.user.id,
-        plan,
-        channelId: thread.id,
-        couponCode: coupon?.code || null
-    });
-
-    const days = PLAN_DAYS[plan];
-    const ticketContainer = panel({
-        title: `🎫 Ticket de compra — ${PLAN_LABELS[plan]}`,
-        description:
-            `Olá <@${interaction.user.id}>! Aqui está seu ticket pra comprar o plano **${PLAN_LABELS[plan]}** por **${priceLine(plan)}**.\n\n` +
-            (coupon ? `**Cupom aplicado:** \`${coupon.code}\` — ${coupon.discountText || "desconto combinado com o admin"}\n\n` : "") +
-            `Combine a forma de pagamento com a administração. Referência do que já está configurado:\n\n${paymentReferenceText()}`,
-        fields: [
-            { name: "Pedido", value: `\`${order.id}\`` },
-            { name: "Validade da key", value: days ? `${days} dia(s)` : "vitalícia (lifetime)" }
-        ],
-        footer: isPrivate
-            ? "Um admin confirma o pagamento aqui pra liberar a key."
-            : "Um admin confirma o pagamento aqui pra liberar a key. (Thread pública — o servidor não tem boost nível 2 pra threads privadas.)"
-    });
-
-    await thread.send(v2Payload(ticketContainer, [ticketActionsRow(order.id)]));
-    await interaction.editReply({ content: `✅ Ticket criado: ${thread}` });
-
-    await sendActionLog(interaction.client, {
-        title: "🎫 Novo ticket de compra",
-        actorId: interaction.user.id,
-        description: `Pedido \`${order.id}\` — plano **${PLAN_LABELS[plan]}** — ${thread}${coupon ? ` — cupom \`${coupon.code}\`` : ""}.`
-    });
+    const payload = termsPanel(plan, couponCode);
+    return interaction.reply({ ...payload, flags: payload.flags | MessageFlags.Ephemeral });
 }
 
 const PIX_POLL_INTERVAL_MS = 5000;
@@ -469,7 +550,7 @@ async function handleAutopixSubmit(interaction, orderId) {
         if (status === "approved") {
             clearInterval(poll);
 
-            const result = await finalizeOrder(interaction.client, order, interaction.client.user.id);
+            const result = await finalizeOrder(interaction.client, order, interaction.client.user.id, valor);
             if (!result.ok) return;
 
             const doneContainer = panel({

@@ -14,7 +14,7 @@ const stmts = {
     get: db.prepare(`SELECT * FROM orders WHERE id = ?`),
     getByChannel: db.prepare(`SELECT * FROM orders WHERE channelId = ?`),
     all: db.prepare(`SELECT * FROM orders`),
-    decide: db.prepare(`UPDATE orders SET status = ?, generatedKey = ?, decidedAt = ?, decidedBy = ? WHERE id = ?`),
+    decide: db.prepare(`UPDATE orders SET status = ?, generatedKey = ?, decidedAt = ?, decidedBy = ?, amountPaid = ? WHERE id = ?`),
     touch: db.prepare(`UPDATE orders SET lastActivityAt = ? WHERE id = ?`)
 };
 
@@ -57,12 +57,12 @@ const OrderStore = {
         stmts.touch.run(Date.now(), id);
     },
 
-    confirm(id, generatedKey, adminId) {
+    confirm(id, generatedKey, adminId, amountPaid = null) {
         const entry = rowToEntry(stmts.get.get(id));
         if (!entry) return { ok: false, reason: "not_found" };
         if (entry.status !== "open") return { ok: false, reason: "already_decided" };
 
-        stmts.decide.run("confirmed", generatedKey, Date.now(), adminId, id);
+        stmts.decide.run("confirmed", generatedKey, Date.now(), adminId, amountPaid, id);
         return { ok: true, entry: rowToEntry(stmts.get.get(id)) };
     },
 
@@ -71,7 +71,7 @@ const OrderStore = {
         if (!entry) return { ok: false, reason: "not_found" };
         if (entry.status !== "open") return { ok: false, reason: "already_decided" };
 
-        stmts.decide.run("rejected", null, Date.now(), adminId, id);
+        stmts.decide.run("rejected", null, Date.now(), adminId, null, id);
         return { ok: true, entry: rowToEntry(stmts.get.get(id)) };
     },
 
@@ -81,7 +81,7 @@ const OrderStore = {
         if (!entry) return { ok: false, reason: "not_found" };
         if (entry.status !== "open") return { ok: false, reason: "already_decided" };
 
-        stmts.decide.run("expired", null, Date.now(), null, id);
+        stmts.decide.run("expired", null, Date.now(), null, null, id);
         return { ok: true, entry: rowToEntry(stmts.get.get(id)) };
     }
 };

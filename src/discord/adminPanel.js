@@ -12,6 +12,8 @@ const KeyStore = require("../store/keyStore");
 const SettingsStore = require("../store/settingsStore");
 const ResetCodeStore = require("../store/resetCodeStore");
 const CouponStore = require("../store/couponStore");
+const OrderStore = require("../store/orderStore");
+const ReviewStore = require("../store/reviewStore");
 const { isAdmin } = require("../utils/permissions");
 const logger = require("../utils/logger");
 const { panel, v2Payload } = require("./v2");
@@ -173,7 +175,8 @@ function shopConfigPanel() {
             { name: `Plano ${PLAN_LABELS.week}`, value: preview(s.plans?.week) },
             { name: `Plano ${PLAN_LABELS.month}`, value: preview(s.plans?.month) },
             { name: `Plano ${PLAN_LABELS.lifetime}`, value: preview(s.plans?.lifetime) },
-            { name: "Canal-base dos tickets", value: s.ticketChannelId ? `<#${s.ticketChannelId}>` : "usa o canal onde /comprar foi digitado" }
+            { name: "Canal-base dos tickets", value: s.ticketChannelId ? `<#${s.ticketChannelId}>` : "usa o canal onde /comprar foi digitado" },
+            { name: "📜 Termos de uso", value: preview(s.termsText) }
         ]
     });
 
@@ -189,6 +192,7 @@ function shopConfigPanel() {
         new ButtonBuilder().setCustomId("admin:ticket_channel").setLabel("Canal-base dos tickets").setStyle(ButtonStyle.Secondary)
     );
     const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("admin:shop_terms").setLabel("📜 Termos de Uso").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("admin:payments").setLabel("⬅️ Voltar pra Vendas/Pagamentos").setStyle(ButtonStyle.Secondary)
     );
 
@@ -349,6 +353,9 @@ const MODALS = {
     shop_image: () => modal("admin_modal:shop_image", "Imagem da loja", [
         { id: "url", label: "URL da imagem (vazio = remover)", required: false, placeholder: "https://..." }
     ]),
+    shop_terms: () => modal("admin_modal:shop_terms", "Termos de Uso", [
+        { id: "texto", label: "Termos mostrados antes de criar o ticket", long: true, required: false }
+    ]),
     plan_day: () => modal("admin_modal:plan_day", "Preço — 1 Dia", [
         { id: "preco", label: "Preço (texto livre, ex: R$ 5,00)", required: false }
     ]),
@@ -455,6 +462,17 @@ async function handleButton(interaction) {
         const codigos = ResetCodeStore.list();
         const codigosUsados = codigos.filter(c => c.used).length;
 
+        const orders = OrderStore.list();
+        const confirmados = orders.filter(o => o.status === "confirmed");
+        const { PLAN_LABELS } = SettingsStore;
+        const porPlano = Object.entries(PLAN_LABELS)
+            .map(([plan, label]) => `${label}: ${confirmados.filter(o => o.plan === plan).length}`)
+            .join(" | ");
+        const faturamento = confirmados.reduce((sum, o) => sum + (o.amountPaid || 0), 0);
+
+        const avaliacoes = ReviewStore.list();
+        const media = ReviewStore.averageStars();
+
         const container = panel({
             title: "📊 Estatísticas",
             fields: [
@@ -465,7 +483,10 @@ async function handleButton(interaction) {
                 { name: "✅ Resgatadas", value: String(resgatadas) },
                 { name: "🎁 Trials", value: String(trials) },
                 { name: "🔓 Códigos gerados", value: String(codigos.length) },
-                { name: "💰 Códigos vendidos", value: String(codigosUsados) }
+                { name: "💰 Códigos vendidos", value: String(codigosUsados) },
+                { name: "🛒 Vendas por plano", value: `${porPlano}\n(${confirmados.length} no total)` },
+                { name: "💵 Faturamento (via Pix automático)", value: `R$ ${faturamento.toFixed(2)}` },
+                { name: "⭐ Avaliações", value: media !== null ? `${media.toFixed(1)}/5 (${avaliacoes.length})` : "nenhuma ainda" }
             ]
         });
         return interaction.update(v2Payload(container, [backRow()]));
@@ -659,6 +680,13 @@ async function handleModalSubmit(interaction) {
         SettingsStore.set("shopImageUrl", url);
         await respondToPanel(interaction, shopConfigPanel());
         return logAction(interaction, url ? "definiu a imagem da loja" : "removeu a imagem da loja");
+    }
+
+    if (action === "shop_terms") {
+        const texto = get("texto") || "";
+        SettingsStore.set("termsText", texto);
+        await respondToPanel(interaction, shopConfigPanel());
+        return logAction(interaction, "atualizou os termos de uso");
     }
 
     if (["plan_day", "plan_week", "plan_month", "plan_lifetime"].includes(action)) {

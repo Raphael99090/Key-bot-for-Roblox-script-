@@ -72,13 +72,19 @@ db.exec(`
     );
 `);
 
-// ALTER TABLE ADD COLUMN falha se a coluna já existir — como a tabela
-// orders já existia antes dessa coluna ser criada, protege com try/catch
-// em vez de exigir apagar o banco de quem já tinha dados.
-try {
-    db.exec(`ALTER TABLE orders ADD COLUMN lastActivityAt INTEGER`);
-} catch {
-    // coluna já existe, segue o jogo
+// ALTER TABLE ADD COLUMN falha se a coluna já existir — como essas
+// tabelas já existiam antes dessas colunas serem criadas, protege com
+// try/catch em vez de exigir apagar o banco de quem já tinha dados.
+for (const stmt of [
+    `ALTER TABLE orders ADD COLUMN lastActivityAt INTEGER`,
+    `ALTER TABLE orders ADD COLUMN amountPaid REAL`,
+    `ALTER TABLE keys ADD COLUMN renewalNotifiedAt INTEGER`
+]) {
+    try {
+        db.exec(stmt);
+    } catch {
+        // coluna já existe, segue o jogo
+    }
 }
 
 module.exports = db;

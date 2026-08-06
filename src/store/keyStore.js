@@ -21,7 +21,9 @@ const stmts = {
     resetHwidStmt: db.prepare(`UPDATE keys SET hwid = NULL, lastHwidReset = ? WHERE key = ?`),
     setHwid: db.prepare(`UPDATE keys SET hwid = ? WHERE key = ?`),
     deleteOne: db.prepare(`DELETE FROM keys WHERE key = ?`),
-    deleteAllStmt: db.prepare(`DELETE FROM keys`)
+    deleteAllStmt: db.prepare(`DELETE FROM keys`),
+    markRenewalNotified: db.prepare(`UPDATE keys SET renewalNotifiedAt = ? WHERE key = ?`),
+    clearRenewalNotified: db.prepare(`UPDATE keys SET renewalNotifiedAt = NULL WHERE key = ?`)
 };
 
 /**
@@ -81,6 +83,7 @@ const KeyStore = {
         const base = entry.expiresAt && entry.expiresAt > Date.now() ? entry.expiresAt : Date.now();
         const newExpiry = base + days * 86400000;
         stmts.setExpiresAt.run(newExpiry, key);
+        stmts.clearRenewalNotified.run(key);
         return { ok: true, entry: rowToEntry(stmts.get.get(key)) };
     },
 
@@ -122,6 +125,13 @@ const KeyStore = {
     resetHwid(key) {
         if (!stmts.get.get(key)) return false;
         stmts.resetHwidStmt.run(Date.now(), key);
+        return true;
+    },
+
+    /** Marca que já avisamos essa key sobre vencimento próximo (evita espamar). */
+    markRenewalNotified(key) {
+        if (!stmts.get.get(key)) return false;
+        stmts.markRenewalNotified.run(Date.now(), key);
         return true;
     },
 

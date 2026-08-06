@@ -19,6 +19,9 @@ const DEFAULTS = {
     shopDescription: "",
     // URL de imagem mostrada na loja (/comprar). Vazio = sem imagem.
     shopImageUrl: "",
+    // Termos de uso / política de reembolso mostrados antes de criar o
+    // ticket — o comprador precisa clicar "Aceito" pra continuar.
+    termsText: "Ao comprar, você concorda que a key é de uso pessoal e não é reembolsável após a entrega.",
     // Preço mostrado em cada botão de plano. Texto livre (ex: "R$ 15,00").
     plans: {
         day: "",
