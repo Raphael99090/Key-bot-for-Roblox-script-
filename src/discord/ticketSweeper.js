@@ -1,8 +1,10 @@
 const OrderStore = require("../store/orderStore");
+const SupportStore = require("../store/supportStore");
 const logger = require("../utils/logger");
 const { postTicketTranscript } = require("./transcript");
 
-const INACTIVITY_MS = 3 * 60 * 1000; // 3 minutos
+const INACTIVITY_MS = 3 * 60 * 1000; // 3 minutos (ticket de compra)
+const SUPPORT_INACTIVITY_MS = 15 * 60 * 1000; // 15 minutos (ticket de suporte — conversa mais devagar)
 const SWEEP_INTERVAL_MS = 30 * 1000; // confere a cada 30s
 
 async function sweepOnce(client) {
@@ -31,9 +33,36 @@ async function sweepOnce(client) {
     }
 }
 
+async function sweepSupportOnce(client) {
+    const now = Date.now();
+    const openTickets = SupportStore.listOpen();
+
+    for (const ticket of openTickets) {
+        const lastActivity = ticket.lastActivityAt || ticket.createdAt;
+        if (now - lastActivity < SUPPORT_INACTIVITY_MS) continue;
+
+        const result = SupportStore.close(ticket.id, null);
+        if (!result.ok) continue;
+
+        try {
+            const channel = await client.channels.fetch(ticket.channelId).catch(() => null);
+            if (channel) {
+                await postTicketTranscript(client, { id: ticket.id, status: "closed" }, channel);
+                await channel.send("🔒 Ticket de suporte fechado automaticamente por inatividade (15 minutos sem mensagens).").catch(() => {});
+                setTimeout(() => channel.delete().catch(() => {}), 5000);
+            }
+        } catch (err) {
+            logger.warn(`Falha ao encerrar ticket de suporte inativo ${ticket.id} -> ${err.message}`);
+        }
+
+        logger.action("sistema", `fechou o ticket de suporte ${ticket.id} por inatividade (15min)`);
+    }
+}
+
 function startTicketSweeper(client) {
     setInterval(() => sweepOnce(client), SWEEP_INTERVAL_MS);
-    logger.info("Sweeper de tickets inativos iniciado (checa a cada 30s, fecha após 3min sem mensagem).");
+    setInterval(() => sweepSupportOnce(client), SWEEP_INTERVAL_MS);
+    logger.info("Sweeper de tickets inativos iniciado (compra: 3min, suporte: 15min, checa a cada 30s).");
 }
 
 module.exports = { startTicketSweeper };

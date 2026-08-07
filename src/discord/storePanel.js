@@ -145,6 +145,7 @@ async function finalizeOrder(client, order, adminId, amountPaid = null) {
         const dmContainer = panel({
             title: "🔑 Sua key chegou!",
             color: 0x2ecc71,
+            imageUrl: SettingsStore.get("purchaseThanksImageUrl") || null,
             description:
                 `Pagamento confirmado — aqui está sua key:\n\n\`${keyEntry.key}\`\n\n` +
                 `**Vence em:** ${fmtDate(keyEntry.expiresAt)}\n\n` +

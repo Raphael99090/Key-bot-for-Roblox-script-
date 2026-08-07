@@ -105,7 +105,8 @@ function configPanel() {
             { name: "Cooldown reset HWID", value: s.resetCooldownHours ? `${s.resetCooldownHours}h` : "sem cooldown" },
             { name: "Validade do trial", value: s.trialDays ? `${s.trialDays} dia(s)` : "desativado" },
             { name: "Reset HWID restrito a admin", value: s.hwidResetAdminOnly ? "sim" : "não" },
-            { name: "Canal de log", value: s.logChannelId ? `<#${s.logChannelId}>` : "desativado" }
+            { name: "Canal de log", value: s.logChannelId ? `<#${s.logChannelId}>` : "desativado" },
+            { name: "Canal-base de suporte (/suporte)", value: s.supportChannelId ? `<#${s.supportChannelId}>` : "usa o canal onde /suporte foi digitado" }
         ]
     });
 
@@ -116,7 +117,8 @@ function configPanel() {
     );
     const row2 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:config_toggle_hwidreset").setLabel("Alternar: HWID só admin").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("admin:config_logchannel").setLabel("Canal de log").setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId("admin:config_logchannel").setLabel("Canal de log").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("admin:config_supportchannel").setLabel("Canal de suporte").setStyle(ButtonStyle.Secondary)
     );
     const row3 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:back").setLabel("⬅️ Voltar").setStyle(ButtonStyle.Secondary)
@@ -176,7 +178,8 @@ function shopConfigPanel() {
             { name: `Plano ${PLAN_LABELS.month}`, value: preview(s.plans?.month) },
             { name: `Plano ${PLAN_LABELS.lifetime}`, value: preview(s.plans?.lifetime) },
             { name: "Canal-base dos tickets", value: s.ticketChannelId ? `<#${s.ticketChannelId}>` : "usa o canal onde /comprar foi digitado" },
-            { name: "📜 Termos de uso", value: preview(s.termsText) }
+            { name: "📜 Termos de uso", value: preview(s.termsText) },
+            { name: "🎁 Imagem de agradecimento", value: s.purchaseThanksImageUrl ? "configurada" : "não configurada" }
         ]
     });
 
@@ -193,10 +196,13 @@ function shopConfigPanel() {
     );
     const row2 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:shop_terms").setLabel("📜 Termos de Uso").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("admin:thanks_image").setLabel("🎁 Imagem de agradecimento").setStyle(ButtonStyle.Secondary)
+    );
+    const row3 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:payments").setLabel("⬅️ Voltar pra Vendas/Pagamentos").setStyle(ButtonStyle.Secondary)
     );
 
-    return v2Payload(container, [selectRow, row1, row2]);
+    return v2Payload(container, [selectRow, row1, row2, row3]);
 }
 
 /** Painel de gestão de cupons. */
@@ -335,6 +341,9 @@ const MODALS = {
     config_logchannel: () => modal("admin_modal:config_logchannel", "Canal de log", [
         { id: "canal", label: "ID do canal (vazio = desativar)", required: false, placeholder: "ex: 123456789012345678" }
     ]),
+    config_supportchannel: () => modal("admin_modal:config_supportchannel", "Canal-base de suporte", [
+        { id: "canal", label: "ID do canal (vazio = usa o do /suporte)", required: false, placeholder: "ex: 123456789012345678" }
+    ]),
     payment_pix: () => modal("admin_modal:payment_pix", "Instruções — Pix", [
         { id: "texto", label: "Chave/valor/instruções", long: true, required: false }
     ]),
@@ -355,6 +364,9 @@ const MODALS = {
     ]),
     shop_terms: () => modal("admin_modal:shop_terms", "Termos de Uso", [
         { id: "texto", label: "Termos mostrados antes de criar o ticket", long: true, required: false }
+    ]),
+    thanks_image: () => modal("admin_modal:thanks_image", "Imagem de agradecimento", [
+        { id: "url", label: "URL da imagem (vazio = remover)", required: false, placeholder: "https://..." }
     ]),
     plan_day: () => modal("admin_modal:plan_day", "Preço — 1 Dia", [
         { id: "preco", label: "Preço (texto livre, ex: R$ 5,00)", required: false }
@@ -660,6 +672,14 @@ async function handleModalSubmit(interaction) {
         return logAction(interaction, `definiu o canal de log: ${id ? `<#${id}>` : "desativado"}`);
     }
 
+    if (action === "config_supportchannel") {
+        const raw = get("canal");
+        const id = raw ? raw.replace(/[<#>]/g, "") : null;
+        SettingsStore.set("supportChannelId", id || null);
+        await respondToPanel(interaction, configPanel());
+        return logAction(interaction, `definiu o canal-base de suporte: ${id ? `<#${id}>` : "usa o do /suporte"}`);
+    }
+
     if (["payment_pix", "payment_btc", "payment_card", "payment_local"].includes(action)) {
         const method = action.replace("payment_", "");
         const texto = get("texto") || "";
@@ -687,6 +707,13 @@ async function handleModalSubmit(interaction) {
         SettingsStore.set("termsText", texto);
         await respondToPanel(interaction, shopConfigPanel());
         return logAction(interaction, "atualizou os termos de uso");
+    }
+
+    if (action === "thanks_image") {
+        const url = get("url") || "";
+        SettingsStore.set("purchaseThanksImageUrl", url);
+        await respondToPanel(interaction, shopConfigPanel());
+        return logAction(interaction, url ? "definiu a imagem de agradecimento" : "removeu a imagem de agradecimento");
     }
 
     if (["plan_day", "plan_week", "plan_month", "plan_lifetime"].includes(action)) {

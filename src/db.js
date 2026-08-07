@@ -70,6 +70,18 @@ db.exec(`
         comment TEXT NOT NULL DEFAULT '',
         createdAt INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS support_tickets (
+        id TEXT PRIMARY KEY,
+        discordId TEXT NOT NULL,
+        channelId TEXT,
+        subject TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'open',
+        createdAt INTEGER NOT NULL,
+        lastActivityAt INTEGER,
+        closedAt INTEGER,
+        closedBy TEXT
+    );
 `);
 
 // ALTER TABLE ADD COLUMN falha se a coluna já existir — como essas

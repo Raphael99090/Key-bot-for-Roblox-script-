@@ -6,7 +6,9 @@ const logger = require("../utils/logger");
 const adminPanel = require("./adminPanel");
 const storePanel = require("./storePanel");
 const surveyPanel = require("./surveyPanel");
+const supportPanel = require("./supportPanel");
 const OrderStore = require("../store/orderStore");
+const SupportStore = require("../store/supportStore");
 const { startTicketSweeper } = require("./ticketSweeper");
 const { startRenewalReminder } = require("./renewalReminder");
 
@@ -67,6 +69,14 @@ function createClient() {
             if (interaction.isModalSubmit() && interaction.customId.startsWith("survey_modal:")) {
                 return await surveyPanel.handleModalSubmit(interaction);
             }
+
+            // Ticket de suporte geral (separado do de compra) usa "support:..." / "support_modal:..."
+            if (interaction.isButton() && interaction.customId.startsWith("support:")) {
+                return await supportPanel.handleButton(interaction);
+            }
+            if (interaction.isModalSubmit() && interaction.customId.startsWith("support_modal:")) {
+                return await supportPanel.handleModalSubmit(interaction);
+            }
         } catch (err) {
             logger.error(`Erro ao processar interação -> ${err.stack || err}`);
             const payload = { content: "❌ Ocorreu um erro ao processar isso.", ephemeral: true };
@@ -79,7 +89,8 @@ function createClient() {
     });
 
     // Marca atividade no ticket sempre que alguém manda mensagem nele —
-    // o sweeper usa isso pra saber se o ticket ficou "morto" (3min quieto).
+    // o sweeper usa isso pra saber se o ticket ficou "morto" (compra:
+    // 3min quieto, suporte: 15min quieto).
     client.on("messageCreate", (message) => {
         if (message.author.bot) return;
         if (!message.channel.isThread?.()) return;
@@ -87,6 +98,12 @@ function createClient() {
         const order = OrderStore.getByChannel(message.channel.id);
         if (order && order.status === "open") {
             OrderStore.touchActivity(order.id);
+            return;
+        }
+
+        const ticket = SupportStore.getByChannel(message.channel.id);
+        if (ticket && ticket.status === "open") {
+            SupportStore.touchActivity(ticket.id);
         }
     });
 

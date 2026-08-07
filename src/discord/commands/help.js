@@ -11,6 +11,7 @@ module.exports = {
             title: "📖 Comandos — 1NXITER KeyBot",
             fields: [
                 { name: "/comprar", value: "Escolhe um plano (1 dia, 7 dias, 30 dias ou lifetime) — cria um ticket privado com a administração pra combinar o pagamento e receber a key." },
+                { name: "/suporte", value: "Abre um ticket de suporte geral (dúvidas, problemas) — separado do ticket de compra." },
                 { name: "/key redeem <key>", value: "Vincula uma key à sua conta." },
                 { name: "/key check <key>", value: "Vê o status de uma key." },
                 { name: "/key trial", value: "Pega uma key de teste grátis (1 por pessoa)." },

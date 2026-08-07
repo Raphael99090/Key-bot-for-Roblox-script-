@@ -22,6 +22,11 @@ const DEFAULTS = {
     // Termos de uso / política de reembolso mostrados antes de criar o
     // ticket — o comprador precisa clicar "Aceito" pra continuar.
     termsText: "Ao comprar, você concorda que a key é de uso pessoal e não é reembolsável após a entrega.",
+    // Imagem mostrada na DM de "obrigado pela compra" quando confirma o pedido.
+    purchaseThanksImageUrl: "",
+    // Canal-base onde os tickets de SUPORTE (diferente do de compra) são
+    // criados. Vazio = usa o canal onde /suporte foi digitado.
+    supportChannelId: null,
     // Preço mostrado em cada botão de plano. Texto livre (ex: "R$ 15,00").
     plans: {
         day: "",
