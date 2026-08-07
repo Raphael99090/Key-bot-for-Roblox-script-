@@ -1,14 +1,14 @@
 const config = require("./config");
 const { createClient } = require("./discord/client");
 const { startApi } = require("./api/server");
-const logger = require("./utils/logger");
+const { validateEnv } = require("./utils/validator");
+const { startAutoBackup } = require("./backup");
 
-if (!config.token || !config.clientId) {
-    logger.error("Faltam DISCORD_TOKEN / CLIENT_ID no .env — copie .env.example pra .env e preencha.");
-    process.exit(1);
-}
+validateEnv(config);
 
 const client = createClient();
 client.login(config.token);
 
 startApi();
+startAutoBackup();
+

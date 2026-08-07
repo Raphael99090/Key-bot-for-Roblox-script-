@@ -9,11 +9,12 @@
     "deploy-commands": "node src/discord/deployCommands.js"
   },
   "dependencies": {
-    "discord.js": "^14.14.1",
+    "discord.js": "^14.19.2",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "mercadopago": "^2.0.8"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.5.0"
   }
 }

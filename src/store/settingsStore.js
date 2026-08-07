@@ -1,53 +1,130 @@
-const fs = require("fs");
-const path = require("path");
-const { paths } = require("../config");
+const db = require("../db");
 
 const DEFAULTS = {
     // Dias de validade padrão quando /key generate não especifica.
     defaultExpiryDays: null, // null = nunca expira
     // Se true, o comando /key resethwid só pode ser usado por admin.
     hwidResetAdminOnly: false,
+    // Horas de espera entre resets gratuitos de HWID (0 = sem cooldown).
+    // Um código de reset comprado (/resetcode) pula esse cooldown.
+    resetCooldownHours: 24,
+    // Dias de validade da key de trial grátis (/key trial). 0 = trial desativado.
+    trialDays: 1,
     // Canal onde o bot avisa quando uma key é gerada/resgatada/revogada (opcional).
-    logChannelId: null
+    logChannelId: null,
+    // Canal onde os tickets de compra (threads) são criados. Vazio = usa
+    // o canal onde /comprar foi digitado.
+    ticketChannelId: null,
+    // Texto configurável que aparece no topo da loja (/comprar).
+    shopDescription: "",
+    // URL de imagem mostrada na loja (/comprar). Vazio = sem imagem.
+    shopImageUrl: "",
+    // Termos de uso / política de reembolso mostrados antes de criar o
+    // ticket — o comprador precisa clicar "Aceito" pra continuar.
+    termsText: "Ao comprar, você concorda que a key é de uso pessoal e não é reembolsável após a entrega.",
+    // Preço mostrado em cada botão de plano. Texto livre (ex: "R$ 15,00").
+    plans: {
+        day: "",
+        week: "",
+        month: "",
+        lifetime: ""
+    },
+    // Instruções de pagamento mostradas dentro do ticket (referência).
+    paymentInfo: {
+        pix: "",
+        btc: "",
+        card: "",
+        local: ""
+    }
 };
 
-function ensureFile() {
-    if (!fs.existsSync(paths.settings)) {
-        fs.mkdirSync(path.dirname(paths.settings), { recursive: true });
-        fs.writeFileSync(paths.settings, JSON.stringify(DEFAULTS, null, 2));
-    }
+const PLAN_LABELS = {
+    day: "1 Dia",
+    week: "7 Dias",
+    month: "30 Dias",
+    lifetime: "Lifetime"
+};
+
+// Dias de validade de cada plano — lifetime é null (nunca expira).
+// Isso é estrutural, não configurável (o preço sim, o prazo não).
+const PLAN_DAYS = {
+    day: 1,
+    week: 7,
+    month: 30,
+    lifetime: null
+};
+
+const PAYMENT_METHODS = {
+    pix: "Pix",
+    btc: "Bitcoin",
+    card: "Cartão",
+    local: "Moeda local"
+};
+
+const stmts = {
+    get: db.prepare(`SELECT value FROM settings WHERE key = ?`),
+    set: db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+};
+
+function readOne(key) {
+    const row = stmts.get.get(key);
+    return row ? JSON.parse(row.value) : DEFAULTS[key];
 }
 
-function read() {
-    ensureFile();
-    try {
-        return { ...DEFAULTS, ...JSON.parse(fs.readFileSync(paths.settings, "utf-8")) };
-    } catch {
-        return { ...DEFAULTS };
-    }
-}
-
-function write(data) {
-    fs.writeFileSync(paths.settings, JSON.stringify(data, null, 2));
+function writeOne(key, value) {
+    stmts.set.run(key, JSON.stringify(value));
 }
 
 const SettingsStore = {
     getAll() {
-        return read();
+        const result = {};
+        for (const k of Object.keys(DEFAULTS)) result[k] = readOne(k);
+        return result;
     },
+
     get(k) {
-        return read()[k];
+        return readOne(k);
     },
+
     set(k, v) {
         if (!(k in DEFAULTS)) return false;
-        const data = read();
-        data[k] = v;
-        write(data);
+        writeOne(k, v);
         return true;
     },
+
     validKeys() {
         return Object.keys(DEFAULTS);
-    }
+    },
+
+    /** Texto de instrução configurado pra um método ("pix"|"btc"|"card"|"local"). */
+    getPaymentInfo(method) {
+        return readOne("paymentInfo")?.[method] || "";
+    },
+
+    /** Define o texto de instrução de um método específico. */
+    setPaymentInfo(method, text) {
+        if (!(method in PAYMENT_METHODS)) return false;
+        const data = readOne("paymentInfo") || {};
+        writeOne("paymentInfo", { ...data, [method]: text });
+        return true;
+    },
+
+    /** Preço configurado pra um plano ("day"|"week"|"month"|"lifetime"). */
+    getPlanPrice(plan) {
+        return readOne("plans")?.[plan] || "";
+    },
+
+    /** Define o preço de um plano específico. */
+    setPlanPrice(plan, price) {
+        if (!(plan in PLAN_LABELS)) return false;
+        const data = readOne("plans") || {};
+        writeOne("plans", { ...data, [plan]: price });
+        return true;
+    },
+
+    PAYMENT_METHODS,
+    PLAN_LABELS,
+    PLAN_DAYS
 };
 
 module.exports = SettingsStore;

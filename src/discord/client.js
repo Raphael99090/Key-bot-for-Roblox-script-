@@ -3,9 +3,18 @@ const path = require("path");
 const { Client, GatewayIntentBits, Collection } = require("discord.js");
 const config = require("../config");
 const logger = require("../utils/logger");
+const adminPanel = require("./adminPanel");
+const storePanel = require("./storePanel");
+const surveyPanel = require("./surveyPanel");
+const OrderStore = require("../store/orderStore");
+const { startTicketSweeper } = require("./ticketSweeper");
+const { startRenewalReminder } = require("./renewalReminder");
 
 function createClient() {
-    const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+    // GuildMessages só pra saber QUE uma mensagem chegou (marcar
+    // atividade do ticket) — não lê o conteúdo, então não precisa da
+    // intent privilegiada de MessageContent.
+    const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
     client.commands = new Collection();
 
     // Carrega todo arquivo dentro de commands/ automaticamente —
@@ -24,15 +33,43 @@ function createClient() {
     logger.info(`${client.commands.size} comando(s) carregado(s): ${[...client.commands.keys()].join(", ")}`);
 
     client.on("interactionCreate", async (interaction) => {
-        if (!interaction.isChatInputCommand()) return;
-        const command = client.commands.get(interaction.commandName);
-        if (!command) return;
-
         try {
-            await command.execute(interaction);
+            // Slash commands (/key, /admin, /help)
+            if (interaction.isChatInputCommand()) {
+                const command = client.commands.get(interaction.commandName);
+                if (!command) return;
+                return await command.execute(interaction);
+            }
+
+            // Botões e modais do painel admin usam customId "admin:..." / "admin_modal:..."
+            if (interaction.isButton() && interaction.customId.startsWith("admin:")) {
+                return await adminPanel.handleButton(interaction);
+            }
+            if (interaction.isModalSubmit() && interaction.customId.startsWith("admin_modal:")) {
+                return await adminPanel.handleModalSubmit(interaction);
+            }
+            if (interaction.isStringSelectMenu() && interaction.customId.startsWith("admin:")) {
+                return await adminPanel.handleSelectMenu(interaction);
+            }
+
+            // Fluxo de compra (/comprar) usa customId "store:..." / "store_modal:..."
+            if (interaction.isButton() && interaction.customId.startsWith("store:")) {
+                return await storePanel.handleButton(interaction);
+            }
+            if (interaction.isModalSubmit() && interaction.customId.startsWith("store_modal:")) {
+                return await storePanel.handleModalSubmit(interaction);
+            }
+
+            // Pesquisa de satisfação (só acontece na DM) usa "survey:..." / "survey_modal:..."
+            if (interaction.isButton() && interaction.customId.startsWith("survey:")) {
+                return await surveyPanel.handleButton(interaction);
+            }
+            if (interaction.isModalSubmit() && interaction.customId.startsWith("survey_modal:")) {
+                return await surveyPanel.handleModalSubmit(interaction);
+            }
         } catch (err) {
-            logger.error(`Erro ao executar /${interaction.commandName} -> ${err.stack || err}`);
-            const payload = { content: "❌ Ocorreu um erro ao executar esse comando.", ephemeral: true };
+            logger.error(`Erro ao processar interação -> ${err.stack || err}`);
+            const payload = { content: "❌ Ocorreu um erro ao processar isso.", ephemeral: true };
             if (interaction.replied || interaction.deferred) {
                 await interaction.followUp(payload).catch(() => {});
             } else {
@@ -41,8 +78,22 @@ function createClient() {
         }
     });
 
+    // Marca atividade no ticket sempre que alguém manda mensagem nele —
+    // o sweeper usa isso pra saber se o ticket ficou "morto" (3min quieto).
+    client.on("messageCreate", (message) => {
+        if (message.author.bot) return;
+        if (!message.channel.isThread?.()) return;
+
+        const order = OrderStore.getByChannel(message.channel.id);
+        if (order && order.status === "open") {
+            OrderStore.touchActivity(order.id);
+        }
+    });
+
     client.once("ready", () => {
         logger.ok(`Bot conectado como ${client.user.tag}`);
+        startTicketSweeper(client);
+        startRenewalReminder(client);
     });
 
     return client;

@@ -3,8 +3,11 @@ const path = require("path");
 const { REST, Routes } = require("discord.js");
 const config = require("../config");
 const logger = require("../utils/logger");
+const { validateEnv } = require("../utils/validator");
 
 async function deploy() {
+    validateEnv(config);
+
     const commandsDir = path.join(__dirname, "commands");
     const commands = [];
 
@@ -12,11 +15,6 @@ async function deploy() {
         if (!file.endsWith(".js")) continue;
         const command = require(path.join(commandsDir, file));
         if (command?.data) commands.push(command.data.toJSON());
-    }
-
-    if (!config.token || !config.clientId) {
-        logger.error("DISCORD_TOKEN e/ou CLIENT_ID faltando no .env — não é possível registrar os comandos.");
-        process.exit(1);
     }
 
     const rest = new REST().setToken(config.token);
