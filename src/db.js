@@ -90,7 +90,8 @@ db.exec(`
 for (const stmt of [
     `ALTER TABLE orders ADD COLUMN lastActivityAt INTEGER`,
     `ALTER TABLE orders ADD COLUMN amountPaid REAL`,
-    `ALTER TABLE keys ADD COLUMN renewalNotifiedAt INTEGER`
+    `ALTER TABLE keys ADD COLUMN renewalNotifiedAt INTEGER`,
+    `ALTER TABLE support_tickets ADD COLUMN type TEXT`
 ]) {
     try {
         db.exec(stmt);

@@ -1,12 +1,17 @@
 const { SlashCommandBuilder } = require("discord.js");
-const { subjectModal } = require("../supportPanel");
+const { isAdmin } = require("../../utils/permissions");
+const { fixedPanel } = require("../supportPanel");
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("suporte")
-        .setDescription("Abre um ticket de suporte com a administração (dúvidas, problemas)"),
+        .setDescription("[admin] Posta o painel fixo de suporte nesse canal"),
 
     async execute(interaction) {
-        return interaction.showModal(subjectModal());
+        if (!isAdmin(interaction)) {
+            return interaction.reply({ content: "❌ Só admins podem postar o painel de suporte.", ephemeral: true });
+        }
+        await interaction.channel.send(fixedPanel());
+        return interaction.reply({ content: "✅ Painel de suporte postado.", ephemeral: true });
     }
 };

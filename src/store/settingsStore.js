@@ -27,6 +27,10 @@ const DEFAULTS = {
     // Canal-base onde os tickets de SUPORTE (diferente do de compra) são
     // criados. Vazio = usa o canal onde /suporte foi digitado.
     supportChannelId: null,
+    // Texto e imagem do painel FIXO de suporte (o que o /suporte posta
+    // no canal — diferente do painel que aparece dentro do ticket).
+    supportPanelDescription: "Precisa de ajuda? Clica no botão abaixo pra abrir um ticket com a administração.",
+    supportPanelImageUrl: "",
     // Preço mostrado em cada botão de plano. Texto livre (ex: "R$ 15,00").
     plans: {
         day: "",

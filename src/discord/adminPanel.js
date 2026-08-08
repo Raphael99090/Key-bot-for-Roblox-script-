@@ -98,6 +98,7 @@ function mainPanel() {
 
 function configPanel() {
     const s = SettingsStore.getAll();
+    const preview = (text) => (text ? (text.length > 60 ? `${text.slice(0, 60)}…` : text) : "não configurado");
     const container = panel({
         title: "⚙️ Configurações",
         fields: [
@@ -106,7 +107,9 @@ function configPanel() {
             { name: "Validade do trial", value: s.trialDays ? `${s.trialDays} dia(s)` : "desativado" },
             { name: "Reset HWID restrito a admin", value: s.hwidResetAdminOnly ? "sim" : "não" },
             { name: "Canal de log", value: s.logChannelId ? `<#${s.logChannelId}>` : "desativado" },
-            { name: "Canal-base de suporte (/suporte)", value: s.supportChannelId ? `<#${s.supportChannelId}>` : "usa o canal onde /suporte foi digitado" }
+            { name: "Canal-base de suporte", value: s.supportChannelId ? `<#${s.supportChannelId}>` : "usa o canal onde o painel foi postado" },
+            { name: "Texto do painel de suporte", value: preview(s.supportPanelDescription) },
+            { name: "Imagem do painel de suporte", value: s.supportPanelImageUrl ? "configurada" : "não configurada" }
         ]
     });
 
@@ -121,10 +124,14 @@ function configPanel() {
         new ButtonBuilder().setCustomId("admin:config_supportchannel").setLabel("Canal de suporte").setStyle(ButtonStyle.Secondary)
     );
     const row3 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("admin:config_supporttext").setLabel("Texto do painel").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("admin:config_supportimage").setLabel("Imagem do painel").setStyle(ButtonStyle.Secondary)
+    );
+    const row4 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("admin:back").setLabel("⬅️ Voltar").setStyle(ButtonStyle.Secondary)
     );
 
-    return v2Payload(container, [row1, row2, row3]);
+    return v2Payload(container, [row1, row2, row3, row4]);
 }
 
 function paymentsPanel() {
@@ -342,7 +349,13 @@ const MODALS = {
         { id: "canal", label: "ID do canal (vazio = desativar)", required: false, placeholder: "ex: 123456789012345678" }
     ]),
     config_supportchannel: () => modal("admin_modal:config_supportchannel", "Canal-base de suporte", [
-        { id: "canal", label: "ID do canal (vazio = usa o do /suporte)", required: false, placeholder: "ex: 123456789012345678" }
+        { id: "canal", label: "ID do canal (vazio = usa onde o painel foi postado)", required: false, placeholder: "ex: 123456789012345678" }
+    ]),
+    config_supporttext: () => modal("admin_modal:config_supporttext", "Texto do painel de suporte", [
+        { id: "texto", label: "Texto mostrado no painel fixo", long: true, required: false }
+    ]),
+    config_supportimage: () => modal("admin_modal:config_supportimage", "Imagem do painel de suporte", [
+        { id: "url", label: "URL da imagem (vazio = remover)", required: false, placeholder: "https://..." }
     ]),
     payment_pix: () => modal("admin_modal:payment_pix", "Instruções — Pix", [
         { id: "texto", label: "Chave/valor/instruções", long: true, required: false }
@@ -677,7 +690,21 @@ async function handleModalSubmit(interaction) {
         const id = raw ? raw.replace(/[<#>]/g, "") : null;
         SettingsStore.set("supportChannelId", id || null);
         await respondToPanel(interaction, configPanel());
-        return logAction(interaction, `definiu o canal-base de suporte: ${id ? `<#${id}>` : "usa o do /suporte"}`);
+        return logAction(interaction, `definiu o canal-base de suporte: ${id ? `<#${id}>` : "usa onde o painel foi postado"}`);
+    }
+
+    if (action === "config_supporttext") {
+        const texto = get("texto") || "";
+        SettingsStore.set("supportPanelDescription", texto);
+        await respondToPanel(interaction, configPanel());
+        return logAction(interaction, "atualizou o texto do painel de suporte");
+    }
+
+    if (action === "config_supportimage") {
+        const url = get("url") || "";
+        SettingsStore.set("supportPanelImageUrl", url);
+        await respondToPanel(interaction, configPanel());
+        return logAction(interaction, url ? "definiu a imagem do painel de suporte" : "removeu a imagem do painel de suporte");
     }
 
     if (["payment_pix", "payment_btc", "payment_card", "payment_local"].includes(action)) {

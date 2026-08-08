@@ -6,7 +6,7 @@ function generateId() {
 }
 
 const stmts = {
-    insert: db.prepare(`INSERT INTO support_tickets (id, discordId, channelId, subject, status, createdAt, lastActivityAt) VALUES (?, ?, ?, ?, 'open', ?, ?)`),
+    insert: db.prepare(`INSERT INTO support_tickets (id, discordId, channelId, subject, type, status, createdAt, lastActivityAt) VALUES (?, ?, ?, ?, ?, 'open', ?, ?)`),
     get: db.prepare(`SELECT * FROM support_tickets WHERE id = ?`),
     getByChannel: db.prepare(`SELECT * FROM support_tickets WHERE channelId = ?`),
     all: db.prepare(`SELECT * FROM support_tickets`),
@@ -16,18 +16,18 @@ const stmts = {
 
 /**
  * Formato de cada ticket de suporte:
- * { id, discordId, channelId, subject, status, createdAt,
- *   lastActivityAt, closedAt, closedBy }
+ * { id, discordId, channelId, subject, type ("duvida"|"compra"),
+ *   status, createdAt, lastActivityAt, closedAt, closedBy }
  */
 const SupportStore = {
-    create({ discordId, channelId, subject }) {
+    create({ discordId, channelId, subject, type }) {
         let id;
         do {
             id = generateId();
         } while (stmts.get.get(id));
 
         const now = Date.now();
-        stmts.insert.run(id, discordId, channelId, subject || "", now, now);
+        stmts.insert.run(id, discordId, channelId, subject || "", type || "duvida", now, now);
         return stmts.get.get(id);
     },
 
